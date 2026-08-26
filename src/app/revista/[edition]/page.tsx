@@ -4,10 +4,11 @@ import { getAllEditions, getEditionBySlug } from "@/lib/magazines";
 import { Reader } from "@/components/reader/Reader";
 import { Preloader } from "@/components/ui/Preloader";
 
-export async function generateStaticParams() {
-  const editions = await getAllEditions();
-  return editions.map((edition) => ({ edition: edition.slug }));
-}
+// No generateStaticParams here on purpose: editions are runtime data from
+// Blob now (published any time via /admin), not something known at build
+// time. force-dynamic makes every request read the live manifest instead of
+// Next prerendering a snapshot from whatever existed at the last deploy.
+export const dynamic = "force-dynamic";
 
 export default async function EditionPage({ params }: PageProps<"/revista/[edition]">) {
   const { edition: slug } = await params;

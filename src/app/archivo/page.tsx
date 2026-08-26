@@ -7,6 +7,10 @@ export const metadata = {
   title: `Ediciones anteriores · ${magazineConfig.name}`,
 };
 
+// Same reasoning as /revista: the manifest lives in Blob and can change at
+// any time via /admin, so this can't be a build-time static snapshot.
+export const dynamic = "force-dynamic";
+
 export default async function ArchivoPage() {
   const editions = await getAllEditions();
 
