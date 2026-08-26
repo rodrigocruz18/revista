@@ -9,9 +9,9 @@ import { ErrorState } from "@/components/ui/ErrorState";
  * the newest YYYY-MM prefix in /public/magazines — nothing here hardcodes a
  * date, so publishing next month's PDF is the only thing that has to change.
  */
-export default function RevistaPage() {
-  const edition = getCurrentEdition();
-  const allEditions = getAllEditions();
+export default async function RevistaPage() {
+  const edition = await getCurrentEdition();
+  const allEditions = await getAllEditions();
 
   if (!edition) {
     return (

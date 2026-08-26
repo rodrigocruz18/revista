@@ -31,7 +31,7 @@ export type LogoIntroProps = {
   contentProgress: number;
 };
 
-type Phase = "checking" | "loading" | "cinematic" | "exiting" | "done";
+type Phase = "loading" | "cinematic" | "exiting" | "done";
 
 /**
  * One-time splash for the Ace Tenis brand — plays out in two acts, both
@@ -52,7 +52,19 @@ type Phase = "checking" | "loading" | "cinematic" | "exiting" | "done";
  * animation library needed for any of this.
  */
 export function LogoIntro({ onComplete, contentReady, contentProgress }: LogoIntroProps) {
-  const [phase, setPhase] = useState<Phase>("checking");
+  // Starts in "loading" rather than some neutral/unknown phase: sessionStorage
+  // can't be read during the server render (or the very first client render,
+  // which has to match it to avoid a hydration mismatch), so there's no way
+  // to know yet whether this splash should play at all. Defaulting to
+  // "loading" means the overlay is part of the very first HTML the browser
+  // paints — if it turns out this session already saw the intro, the effect
+  // below flips it to "done" a tick later and it disappears. The alternative
+  // (starting from a "not decided yet" phase that renders nothing) was the
+  // actual bug reported: it left a gap, before that effect ran, where the
+  // *page underneath* — its own plain "Preparando edicion..." loader — was
+  // the only thing on screen, showing up as a stray extra loading screen
+  // ahead of this one instead of being covered by it from the start.
+  const [phase, setPhase] = useState<Phase>("loading");
   const [reduceMotion, setReduceMotion] = useState(false);
   const [displayPct, setDisplayPct] = useState(0);
 
@@ -78,7 +90,7 @@ export function LogoIntro({ onComplete, contentReady, contentProgress }: LogoInt
     }
     setReduceMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     loadingStartRef.current = performance.now();
-    setPhase("loading");
+    // Already "loading" by default — nothing else to do for the happy path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -150,7 +162,7 @@ export function LogoIntro({ onComplete, contentReady, contentProgress }: LogoInt
     return () => clearTimeout(timer);
   }, [phase, reduceMotion, onComplete]);
 
-  if (phase === "checking" || phase === "done") return null;
+  if (phase === "done") return null;
 
   const isLoading = phase === "loading";
 

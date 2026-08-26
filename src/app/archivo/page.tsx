@@ -7,8 +7,8 @@ export const metadata = {
   title: `Ediciones anteriores · ${magazineConfig.name}`,
 };
 
-export default function ArchivoPage() {
-  const editions = getAllEditions();
+export default async function ArchivoPage() {
+  const editions = await getAllEditions();
 
   return (
     <main className="min-h-screen bg-[#0b0f0d] px-4 py-10 sm:px-8">

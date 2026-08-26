@@ -1,39 +1,43 @@
-import manifest from "@/data/magazines.json";
 import type { Magazine } from "@/types/magazine";
+import { readManifestEditions } from "@/lib/blobManifest";
 
 /**
- * Thin, framework-agnostic accessors over the build-time manifest. Nothing
- * here does I/O — the manifest is a static JSON import, so these are safe to
- * call from Server Components, Client Components, and route handlers alike.
+ * Thin accessors over the manifest (see @/lib/blobManifest for where it
+ * actually comes from — Vercel Blob in production once /admin is set up,
+ * or the static build-time file otherwise). Async because reading the
+ * Blob-backed manifest is a network call; callers (Server Components,
+ * generateStaticParams, route handlers) all support awaiting it.
  */
 
-export function getAllEditions(): Magazine[] {
-  return manifest.editions as Magazine[];
+export async function getAllEditions(): Promise<Magazine[]> {
+  return readManifestEditions();
 }
 
-export function getCurrentEdition(): Magazine | null {
-  const editions = getAllEditions();
+export async function getCurrentEdition(): Promise<Magazine | null> {
+  const editions = await getAllEditions();
   return editions.find((edition) => edition.isCurrent) ?? editions[0] ?? null;
 }
 
-export function getEditionBySlug(slug: string): Magazine | null {
-  return getAllEditions().find((edition) => edition.slug === slug) ?? null;
+export async function getEditionBySlug(slug: string): Promise<Magazine | null> {
+  const editions = await getAllEditions();
+  return editions.find((edition) => edition.slug === slug) ?? null;
 }
 
-export function getPreviousEdition(slug: string): Magazine | null {
-  const editions = getAllEditions();
+export async function getPreviousEdition(slug: string): Promise<Magazine | null> {
+  const editions = await getAllEditions();
   const index = editions.findIndex((edition) => edition.slug === slug);
   if (index === -1 || index === editions.length - 1) return null;
   return editions[index + 1];
 }
 
-export function getNextEdition(slug: string): Magazine | null {
-  const editions = getAllEditions();
+export async function getNextEdition(slug: string): Promise<Magazine | null> {
+  const editions = await getAllEditions();
   const index = editions.findIndex((edition) => edition.slug === slug);
   if (index <= 0) return null;
   return editions[index - 1];
 }
 
-export function hasAnyEdition(): boolean {
-  return getAllEditions().length > 0;
+export async function hasAnyEdition(): Promise<boolean> {
+  const editions = await getAllEditions();
+  return editions.length > 0;
 }

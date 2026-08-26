@@ -4,14 +4,15 @@ import { getAllEditions, getEditionBySlug } from "@/lib/magazines";
 import { Reader } from "@/components/reader/Reader";
 import { Preloader } from "@/components/ui/Preloader";
 
-export function generateStaticParams() {
-  return getAllEditions().map((edition) => ({ edition: edition.slug }));
+export async function generateStaticParams() {
+  const editions = await getAllEditions();
+  return editions.map((edition) => ({ edition: edition.slug }));
 }
 
 export default async function EditionPage({ params }: PageProps<"/revista/[edition]">) {
   const { edition: slug } = await params;
-  const edition = getEditionBySlug(slug);
-  const allEditions = getAllEditions();
+  const edition = await getEditionBySlug(slug);
+  const allEditions = await getAllEditions();
 
   if (!edition) notFound();
 

@@ -8,7 +8,20 @@ import { AppLoadingContext, type AppLoadingApi } from "@/components/intro/AppLoa
 // worth waiting for (a light page with no real async data, e.g. the home
 // or archive page) — let the splash proceed instead of sitting at 0%
 // forever for a load that was never going to report itself.
-const AUTO_READY_GRACE_MS = 350;
+//
+// This has to be generous, not snappy: on a real deploy (unlike a warm
+// localhost), the very first paint is a server-rendered shell that hasn't
+// hydrated yet — nothing has run any React effects at all until hydration
+// finishes downloading/parsing the page's JS. `useAppLoading()` callers
+// (e.g. the Reader, claiming "reader") can only call `begin()` from an
+// effect, so on a slow connection or a cold serverless start, hydration
+// itself can easily take longer than a short grace window. If that window
+// fires first, the splash wraps up and hands off to a page that hasn't
+// actually claimed its own loading yet, and its own plain fallback
+// ("Preparando edicion...") becomes visible for a beat — the exact bug this
+// value used to cause at 350ms. Longer errs toward "wait a little longer on
+// the rare slow load" rather than "flash old UI on it."
+const AUTO_READY_GRACE_MS = 1200;
 
 type LoaderState = { ready: boolean; progress: number };
 
