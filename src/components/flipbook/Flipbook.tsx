@@ -12,6 +12,9 @@ import {
 import HTMLFlipBook from "react-pageflip";
 import type { PdfDocumentManager } from "@/lib/pdf";
 import { FlipbookPage } from "@/components/flipbook/FlipbookPage";
+import { FlipbookAdPage } from "@/components/flipbook/FlipbookAdPage";
+import { FlipbookFillerPage } from "@/components/flipbook/FlipbookFillerPage";
+import type { FullPageSpot } from "@/lib/fullPageSpots";
 import { clamp } from "@/lib/utils";
 
 export type FlipbookHandle = {
@@ -19,14 +22,15 @@ export type FlipbookHandle = {
   next: () => void;
   prev: () => void;
   /**
-   * Which page is visually under a given viewport point right now — the
-   * left or right half of a two-page spread resolve to different page
+   * Which real page is visually under a given viewport point right now —
+   * the left or right half of a two-page spread resolve to different page
    * numbers. Used when the user starts zooming with the mouse wheel, so the
    * zoom opens on whichever page they were actually pointing at instead of
    * always the spread's nominal "current" page (react-pageflip's onFlip only
    * ever reports the left page of a spread, which is what made zooming
    * while pointing at the right-hand page visibly jump to the left one).
-   * Returns null if the point isn't over the book at all.
+   * Returns null if the point isn't over the book at all, or is over a
+   * full-page sponsor slot (nothing real to zoom into there).
    */
   pageAtPoint: (clientX: number, clientY: number) => number | null;
 };
@@ -43,36 +47,47 @@ export type FlipbookGutter = {
   top: number;
   visibleWidth: number;
   visibleHeight: number;
-  /** Whether two pages are currently shown side by side (landscape, not the
-   * lone cover/back page) — used by the full-page sponsor interstitial to
-   * decide whether to fake a two-page spread or a single page. */
-  isSpread: boolean;
 };
 
 export type FlipbookProps = {
   manager: PdfDocumentManager;
+  /** Real page count of the underlying PDF — never includes the full-page
+   * sponsor slots inserted via `spots` (see the sequence builder below). */
   pageCount: number;
+  /** Fixed full-page sponsor placements for this edition/session (see
+   * fullPageSpots.ts) — each is inserted as a genuine page (or two, in a
+   * two-page spread) right after its `beforePage`, so it turns with
+   * exactly the same engine as every other page. Must be its FINAL value
+   * before this component first mounts: the book's own page array is built
+   * from it once and shifts if it changes shape under an already-open
+   * book, so the parent should wait until `spots` is settled before
+   * rendering `<Flipbook>` at all (see Reader's `spotsReady`). */
+  spots: FullPageSpot[];
   initialPage: number;
   baseWidth: number;
   baseHeight: number;
   renderScale: number;
   isMobile: boolean;
   reduceMotion: boolean;
+  /** Real page number — never called while sitting on a full-page sponsor
+   * slot (see `onFullPageActiveChange` for that). */
   onPageChange: (pageNumber: number) => void;
   /** Fires whenever the book's own layout is (re)computed — null while it
    * isn't ready yet (still measuring, or the container has no size). */
   onGutterChange?: (gutter: FlipbookGutter | null) => void;
+  /** Fires whenever the currently-shown page becomes (or stops being) a
+   * full-page sponsor slot — a real PDF page isn't being displayed right
+   * then, so a parent should suspend anything that assumes one is (zoom
+   * entry, in particular: it would otherwise zoom into whatever real page
+   * was last tracked, not the sponsor page actually on screen). */
+  onFullPageActiveChange?: (active: boolean) => void;
   /**
    * When provided, tap/click-to-turn (the only way this component ever
    * turns a page — see the note on disableFlipByClick below) calls these
    * instead of driving the page-flip controller directly. This lets a
    * parent centralize *every* forward/backward request — tap, keyboard,
-   * toolbar button all end up here — behind one gate, which is what makes
-   * the full-page sponsor interstitial possible: it needs to intercept a
-   * "go forward" request regardless of which input triggered it, show
-   * itself instead of the real flip, and only let the *next* such request
-   * through to the book. Falls back to calling the controller directly if
-   * not provided, so this component still works standalone.
+   * toolbar button all end up here. Falls back to calling the controller
+   * directly if not provided, so this component still works standalone.
    */
   onRequestNext?: () => void;
   onRequestPrev?: () => void;
@@ -91,10 +106,42 @@ type PageFlipController = {
 
 const RENDER_WINDOW = 2;
 
+/** One slot in the book's actual page array, as handed to HTMLFlipBook —
+ * "book position" from here on, to distinguish it from the real PDF page
+ * number a "real" entry carries. A full-page sponsor spot always inserts
+ * an "ad" entry right after its `beforePage`, plus a "filler" entry too
+ * when spreads are in play (see `includeFiller`) — always exactly 2 slots
+ * in that case, never 1, so every real page after the spot keeps the same
+ * odd/even spread pairing it would have had without the spot at all. */
+type SequenceEntry = { kind: "real"; page: number } | { kind: "ad" | "filler"; spot: FullPageSpot };
+
+function buildSequence(pageCount: number, spots: FullPageSpot[], includeFiller: boolean): SequenceEntry[] {
+  const spotByBeforePage = new Map(spots.map((s) => [s.beforePage, s]));
+  const sequence: SequenceEntry[] = [];
+  for (let page = 1; page <= pageCount; page++) {
+    sequence.push({ kind: "real", page });
+    const spot = spotByBeforePage.get(page);
+    if (spot) {
+      sequence.push({ kind: "ad", spot });
+      if (includeFiller) sequence.push({ kind: "filler", spot });
+    }
+  }
+  return sequence;
+}
+
+/** 1-based book position of a given real page number — falls back to 1
+ * (should never actually happen: every real page 1..pageCount always has
+ * exactly one "real" entry in the sequence). */
+function bookPositionForRealPage(sequence: SequenceEntry[], realPage: number): number {
+  const idx = sequence.findIndex((entry) => entry.kind === "real" && entry.page === realPage);
+  return idx === -1 ? 1 : idx + 1;
+}
+
 export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipbook(
   {
     manager,
     pageCount,
+    spots,
     initialPage,
     baseWidth,
     baseHeight,
@@ -103,6 +150,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
     reduceMotion,
     onPageChange,
     onGutterChange,
+    onFullPageActiveChange,
     onRequestNext,
     onRequestPrev,
   },
@@ -111,7 +159,23 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
   // react-pageflip's own ref type is effectively `any`; we keep it isolated here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bookRef = useRef<any>(null);
-  const [activePage, setActivePage] = useState(initialPage);
+
+  // Landscape/desktop shows the sponsor as a real two-page spread (ad +
+  // blank filler); portrait/mobile has no second slot to fill, so the ad
+  // stands alone — one page, not two, to avoid an extra tap through
+  // nothing. See the module doc comment on SequenceEntry for why this is
+  // always exactly 1 or 2 slots, never a mix, per spot.
+  const sequence = useMemo(() => buildSequence(pageCount, spots, !isMobile), [pageCount, spots, isMobile]);
+
+  // `activePage` is a 1-based position in `sequence` (a "book position"),
+  // NOT a real PDF page number — the two only coincide when there are no
+  // sponsor spots before the current position. Every external boundary
+  // (the `initialPage` prop, `onPageChange`, `goToPage`, `pageAtPoint`)
+  // converts between the two right at the edge; everything else in this
+  // component (isEdgePage, spreadLeftPage, centering, render-window,
+  // tap-zone geometry) operates purely on book positions and doesn't care
+  // what they represent, so none of that math needed to change.
+  const [activePage, setActivePage] = useState(() => bookPositionForRealPage(sequence, initialPage));
 
   // react-pageflip's "stretch" sizing only fits the container's *width* —
   // on a wide-but-short viewport it happily computes a height taller than
@@ -200,7 +264,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
   // landscape block (react-pageflip anchors the cover to the right, the
   // back page to the left) — shift the whole block by half a page so the
   // one visible page lands dead-center instead of off to one side.
-  const isEdgePage = activePage === 1 || activePage === pageCount;
+  const isEdgePage = activePage === 1 || activePage === sequence.length;
 
   // `activePage` is only guaranteed to be the LEFT page of its spread when
   // it came from react-pageflip's own onFlip callback (handleFlip below) —
@@ -255,21 +319,30 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
       onGutterChange(null);
       return;
     }
-    const isSpread = orientation === "landscape" && !isEdgePage;
-    onGutterChange({ left: zoneLeft, top: zoneTop, visibleWidth, visibleHeight, isSpread });
-  }, [onGutterChange, bookSize, containerSize, zoneLeft, zoneTop, visibleWidth, visibleHeight, orientation, isEdgePage]);
+    onGutterChange({ left: zoneLeft, top: zoneTop, visibleWidth, visibleHeight });
+  }, [onGutterChange, bookSize, containerSize, zoneLeft, zoneTop, visibleWidth, visibleHeight]);
+
+  // Tells a parent whenever the currently-shown page is a full-page
+  // sponsor slot rather than real content — see the prop's own doc
+  // comment for why that matters (mainly: suspending zoom entry).
+  useEffect(() => {
+    if (!onFullPageActiveChange) return;
+    const entry = sequence[activePage - 1];
+    onFullPageActiveChange(entry ? entry.kind !== "real" : false);
+  }, [onFullPageActiveChange, sequence, activePage]);
 
   useImperativeHandle(
     ref,
     () => ({
       goToPage: (pageNumber: number) => {
-        const clamped = Math.max(1, Math.min(pageCount, pageNumber));
+        const clampedReal = Math.max(1, Math.min(pageCount, pageNumber));
+        const bookPos = bookPositionForRealPage(sequence, clampedReal);
         // turnToPage() jumps instantly without going through the flip
         // controller, so — unlike flipNext/flipPrev — it never fires
         // onFlip. Update our own window-tracking state directly so the
         // newly-visible page renders immediately.
-        getController()?.turnToPage(clamped - 1);
-        setActivePage(clamped);
+        getController()?.turnToPage(bookPos - 1);
+        setActivePage(bookPos);
       },
       next: () => getController()?.flipNext(),
       prev: () => getController()?.flipPrev(),
@@ -280,19 +353,24 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
         const y = clientY - rect.top;
         if (y < zoneTop || y > zoneTop + visibleHeight) return null;
         if (x < zoneLeft || x > zoneLeft + visibleWidth) return null;
+        let bookPos: number;
         if (orientation !== "landscape" || isEdgePage) {
           // Only one page is actually visible (portrait/mobile, or a lone
           // cover/back page) — no left/right ambiguity to resolve.
-          return clamp(activePage, 1, pageCount);
+          bookPos = clamp(activePage, 1, sequence.length);
+        } else {
+          // Two-page spread: spreadLeftPage is the left page, +1 the right.
+          const isRightHalf = x >= zoneLeft + bookSize.width;
+          bookPos = clamp(isRightHalf ? spreadLeftPage + 1 : spreadLeftPage, 1, sequence.length);
         }
-        // Two-page spread: spreadLeftPage is the left page, +1 the right.
-        const isRightHalf = x >= zoneLeft + bookSize.width;
-        return clamp(isRightHalf ? spreadLeftPage + 1 : spreadLeftPage, 1, pageCount);
+        const entry = sequence[bookPos - 1];
+        return entry?.kind === "real" ? entry.page : null;
       },
     }),
     [
       getController,
       pageCount,
+      sequence,
       bookSize,
       orientation,
       isEdgePage,
@@ -307,21 +385,17 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
 
   const handleFlip = useCallback(
     (event: FlipEvent) => {
-      const pageNumber = event.data + 1;
-      setActivePage(pageNumber);
-      onPageChange(pageNumber);
+      const bookPos = event.data + 1;
+      setActivePage(bookPos);
+      const entry = sequence[bookPos - 1];
+      if (entry?.kind === "real") onPageChange(entry.page);
     },
-    [onPageChange],
+    [onPageChange, sequence],
   );
 
   const handleChangeOrientation = useCallback((event: OrientationEvent) => {
     setOrientation(event.data);
   }, []);
-
-  const pages = useMemo(
-    () => Array.from({ length: pageCount }, (_, i) => i + 1),
-    [pageCount],
-  );
 
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -423,18 +497,27 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
             onUpdate={() => {}}
             renderOnlyPageLengthChange={false}
           >
-            {pages.map((pageNumber) => {
-              const shouldRender = Math.abs(pageNumber - spreadLeftPage) <= RENDER_WINDOW;
-              return (
-                <FlipbookPage
-                  key={pageNumber}
-                  number={pageNumber}
-                  totalPages={pageCount}
-                  manager={manager}
-                  scale={renderScale}
-                  shouldRender={shouldRender || pageNumber <= RENDER_WINDOW + 1}
-                />
-              );
+            {sequence.map((entry, index) => {
+              const bookPos = index + 1;
+              const shouldRender = Math.abs(bookPos - spreadLeftPage) <= RENDER_WINDOW || bookPos <= RENDER_WINDOW + 1;
+              if (entry.kind === "real") {
+                return (
+                  <FlipbookPage
+                    key={`real-${entry.page}`}
+                    number={entry.page}
+                    totalPages={pageCount}
+                    manager={manager}
+                    scale={renderScale}
+                    shouldRender={shouldRender}
+                  />
+                );
+              }
+              if (entry.kind === "ad") {
+                return (
+                  <FlipbookAdPage key={`ad-${entry.spot.id}`} sponsor={entry.spot.sponsor} edgeInset={edgeZoneWidth} />
+                );
+              }
+              return <FlipbookFillerPage key={`filler-${entry.spot.id}`} />;
             })}
           </HTMLFlipBook>
         </div>

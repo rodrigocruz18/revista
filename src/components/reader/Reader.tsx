@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Magazine } from "@/types/magazine";
 import type { Sponsor } from "@/types/sponsor";
 import { getPdfDocumentManager } from "@/lib/pdf";
@@ -12,12 +11,10 @@ import { Toolbar } from "@/components/tools/Toolbar";
 import { Preloader } from "@/components/ui/Preloader";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SponsorSlot } from "@/components/sponsors/SponsorSlot";
-import { FullPageSponsorAd, type PageBox } from "@/components/sponsors/FullPageSponsorAd";
 import { useMediaQuery, usePrefersReducedMotion } from "@/hooks/useMediaQuery";
 import { useKeyboardShortcuts } from "@/lib/keyboard";
 import { ZOOM_MAX, ZOOM_MIN, magazineConfig } from "@/config/magazine";
 import { clamp, cn } from "@/lib/utils";
-import { loadEditionProgress, saveEditionProgress } from "@/lib/reader-storage";
 import { useAppLoading } from "@/components/intro/AppLoadingContext";
 import { useSponsorRotation } from "@/lib/sponsorRotation";
 import { type FullPageSpot, fromStoredSpots, pickFullPageSpots, toStoredSpots } from "@/lib/fullPageSpots";
@@ -32,9 +29,6 @@ export function Reader({
   sponsors: Sponsor[];
 }) {
   const manager = useMemo(() => getPdfDocumentManager(edition.url), [edition.url]);
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   const isMobile = useMediaQuery("(max-width: 767px)");
   const reduceMotion = usePrefersReducedMotion();
@@ -53,8 +47,8 @@ export function Reader({
 
   const baseScale = isMobile ? 1.6 : 2;
 
-  // ---- Sponsors: rotating banner + once-per-session full-page interstitial.
-  // A single rotation timer drives both the mobile (horizontal) and desktop
+  // ---- Sponsors: rotating banner + fixed full-page interstitials. A
+  // single rotation timer drives both the mobile (horizontal) and desktop
   // (vertical) banner slots below, so they always agree on which sponsor is
   // currently up instead of running on independent, possibly-drifting timers.
   const currentBannerSponsor = useSponsorRotation(sponsors);
@@ -67,96 +61,44 @@ export function Reader({
   const [gutter, setGutter] = useState<FlipbookGutter | null>(null);
   const MIN_GUTTER_FOR_SPONSOR = 110; // below this the space is too tight to show a banner nicely
 
-  // Same gutter geometry, reshaped into the box the fake interstitial
-  // page(s) need to exactly overlay the real book — see FullPageSponsorAd.
-  const fullPageBox: PageBox | null = gutter
-    ? { left: gutter.left, top: gutter.top, width: gutter.visibleWidth, height: gutter.visibleHeight }
-    : null;
-
-  // ---- Full-page sponsor: fixed spots in the page sequence (see
-  // fullPageSpots.ts's doc comment for the model). `spots` is this
-  // edition's randomized layout for the session; `activeSpot` is whichever
-  // one is currently showing as a fake page, plus which direction the
-  // reader crossed into it from (which side "continues" through it for
-  // real vs. just cancels back out — see requestNext/requestPrev below).
+  // ---- Full-page sponsor: fixed spots in the page sequence, inserted as
+  // genuine pages inside the book itself (see fullPageSpots.ts's doc
+  // comment, and Flipbook's sequence builder). `spots` is this edition's
+  // randomized layout for the session. It MUST be settled before Flipbook
+  // first mounts (see Flipbook's own doc comment on the `spots` prop) — so
+  // `spotsReady` gates the whole reader below until the spots-init effect
+  // has actually run for the current edition, rather than letting Flipbook
+  // mount against a still-empty `spots` and then swap the book's page
+  // array out from under an already-open reader.
   const [spots, setSpots] = useState<FullPageSpot[]>([]);
+  const [spotsReady, setSpotsReady] = useState(false);
   const spotsInitializedRef = useRef(false);
-  const [activeSpot, setActiveSpot] = useState<{ spot: FullPageSpot; arrivedFrom: "forward" | "backward" } | null>(
-    null,
-  );
-  const fullPageActiveRef = useRef(false);
-  useEffect(() => {
-    fullPageActiveRef.current = activeSpot !== null;
-  }, [activeSpot]);
 
-  // A spot only learns its *exact* firstPageAfter (see fullPageSpots.ts)
-  // once the reader actually flips forward through it for real — this ref
-  // hands that off from requestNext (which triggers the flip) to
-  // handleRealPageChange (which sees the flip's real result).
-  const learningSpotRef = useRef<FullPageSpot | null>(null);
-
-  // Non-null while the active spot is playing its exit swing (see
-  // FullPageSponsorAd's `exitDirection` prop) — set the instant a
-  // prev/next is requested while a spot is showing, whichever way that
-  // request points, whether it continues past the spot or cancels back out
-  // of it. `activeSpot` itself stays populated for the whole exit so the
-  // interstitial keeps rendering (now with the "-out" animation class)
-  // instead of vanishing the instant the request comes in; only once the
-  // swing finishes (see `beginSpotExit`'s timeout below) does it clear both
-  // and perform whatever real flip (if any) was deferred.
-  const [exitDirection, setExitDirection] = useState<"forward" | "backward" | null>(null);
-  const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const EXIT_ANIM_MS = reduceMotion ? 1 : 260;
-
-  const clearSpotExitTimeout = useCallback(() => {
-    if (exitTimeoutRef.current) {
-      clearTimeout(exitTimeoutRef.current);
-      exitTimeoutRef.current = null;
-    }
+  // Whether the page currently on screen is a full-page sponsor slot rather
+  // than real content — fed by Flipbook's onFullPageActiveChange. Gates
+  // zoom entry (nothing real to zoom into on an ad) and keeps the toolbar
+  // pill from fading out while it's the only way to leave the ad.
+  const [onAdPage, setOnAdPage] = useState(false);
+  const onAdPageRef = useRef(false);
+  const handleFullPageActiveChange = useCallback((active: boolean) => {
+    onAdPageRef.current = active;
+    setOnAdPage(active);
   }, []);
-  useEffect(() => clearSpotExitTimeout, [clearSpotExitTimeout]);
-
-  const beginSpotExit = useCallback(
-    (direction: "forward" | "backward", afterFlip: "next" | "prev" | null, learn?: FullPageSpot) => {
-      if (learn) learningSpotRef.current = learn;
-      clearSpotExitTimeout();
-      setExitDirection(direction);
-      exitTimeoutRef.current = setTimeout(() => {
-        exitTimeoutRef.current = null;
-        setActiveSpot(null);
-        setExitDirection(null);
-        if (afterFlip === "next") flipbookRef.current?.next();
-        else if (afterFlip === "prev") flipbookRef.current?.prev();
-      }, EXIT_ANIM_MS);
-    },
-    [clearSpotExitTimeout, EXIT_ANIM_MS],
-  );
 
   useEffect(() => {
     if (!numPages || spotsInitializedRef.current) return;
     spotsInitializedRef.current = true;
     const stored = loadFullPageSpotLayout(edition.slug);
-    const restored = stored ? fromStoredSpots(stored, sponsors, isMobile) : [];
-    const layout = restored.length > 0 ? restored : pickFullPageSpots(numPages, sponsors, isMobile);
+    const restored = stored ? fromStoredSpots(stored, sponsors) : [];
+    const layout = restored.length > 0 ? restored : pickFullPageSpots(numPages, sponsors);
     if (!stored || restored.length !== stored.length) saveFullPageSpotLayout(edition.slug, toStoredSpots(layout));
     // Synchronizing with `numPages` becoming known for this edition, not
     // something derivable during render (it also reads sessionStorage).
     setSpots(layout);
-  }, [numPages, sponsors, edition.slug, isMobile]);
+    setSpotsReady(true);
+  }, [numPages, sponsors, edition.slug]);
 
-  // Only counts *real* flips (see the onPageChange wiring on <Flipbook> below)
-  // — never the initial page the reader opened on, and never the direct
-  // setCurrentPage() calls the wheel-zoom-entry handler makes further down.
-  const handleRealPageChange = useCallback((page: number) => {
-    setCurrentPage(page);
-    if (learningSpotRef.current) {
-      const spot = learningSpotRef.current;
-      learningSpotRef.current = null;
-      setSpots((prev) => prev.map((s) => (s.id === spot.id ? { ...s, firstPageAfter: page } : s)));
-    }
-  }, []);
-
-  // ---- Load document metadata + resolve the page we should open on. -----
+  // ---- Load document metadata + always open on page 1 (the cover). -----
   useEffect(() => {
     let cancelled = false;
     // Resets reader state for the newly-selected edition before its PDF
@@ -168,9 +110,7 @@ export function Reader({
     setInitialPage(null);
     spotsInitializedRef.current = false;
     setSpots([]);
-    setActiveSpot(null);
-    clearSpotExitTimeout();
-    setExitDirection(null);
+    setSpotsReady(false);
 
     // Tells the splash's loading phase (see LogoIntro/IntroGate) there's
     // real work to wait for — on the very first load of a browser session
@@ -186,11 +126,10 @@ export function Reader({
         setBaseSize({ width: Math.round(size.width), height: Math.round(size.height) });
         appLoading?.setProgress("reader", 0.75);
 
-        const fromUrl = Number(searchParams.get("p"));
-        const progress = loadEditionProgress(edition.slug);
-        const resolved = fromUrl && fromUrl >= 1 && fromUrl <= pages ? fromUrl : clamp(progress.lastPage || 1, 1, pages);
-        setInitialPage(resolved);
-        setCurrentPage(resolved);
+        // Every edition always opens on its cover — no restoring or
+        // persisting a "last read page" across visits.
+        setInitialPage(1);
+        setCurrentPage(1);
       })
       .catch(() => {
         if (!cancelled) setLoadError("El archivo PDF no pudo abrirse.");
@@ -206,7 +145,7 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manager, edition.slug]);
 
-  const isReady = !loadError && !!numPages && !!baseSize && initialPage !== null;
+  const isReady = !loadError && !!numPages && !!baseSize && initialPage !== null && spotsReady;
 
   // Signals the splash once this edition's first page is actually showable
   // (same condition that swaps the reader's own inline Preloader for the
@@ -215,16 +154,6 @@ export function Reader({
     if (isReady) appLoading?.finish("reader");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady]);
-
-  // ---- Persist progress + reflect page in the URL (shareable links). ----
-  useEffect(() => {
-    if (!initialPage) return;
-    saveEditionProgress(edition.slug, { lastPage: currentPage });
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("p", String(currentPage));
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, edition.slug]);
 
   // ---- Toolbar + mobile header auto-hide on inactivity. Both float
   // directly on top of the PDF on mobile (see the header/Toolbar markup
@@ -282,7 +211,7 @@ export function Reader({
     const el = containerRef.current;
     if (!el) return;
     function onWheel(e: WheelEvent) {
-      if (fullPageActiveRef.current) return;
+      if (onAdPageRef.current) return;
       if (zoomRef.current > ZOOM_MIN) return;
       e.preventDefault();
       const next = zoomRef.current - e.deltaY * 0.0015;
@@ -307,83 +236,23 @@ export function Reader({
   // Every forward/backward navigation intent — tap-corner (via Flipbook's
   // onRequestNext/onRequestPrev), keyboard arrows, and the toolbar buttons —
   // funnels through these two functions instead of calling flipbookRef
-  // directly, which is what makes it possible to intercept a turn gesture
-  // and show a spot's fake page in place of a real flip, regardless of
-  // which input method triggered it.
-  //
-  // A spot is "passed" once currentPage has reached its (exact-once-learned,
-  // best-guess until then — see fullPageSpots.ts) firstPageAfter. Comparing
-  // real page numbers this way, rather than counting flips, is what makes
-  // the trigger direction-agnostic: it fires the same way whether the
-  // reader arrives at the boundary by flipping forward into it or backward
-  // into it, and correctly stays quiet for a spot the reader is nowhere
-  // near, however long ago they last crossed it.
+  // directly. Full-page sponsor spots are now genuine pages inside the book
+  // (see fullPageSpots.ts / Flipbook's sequence builder), so there's no
+  // interception logic needed here any more — react-pageflip just turns to
+  // whatever's next, ad slot or real page alike, the same way every time.
   const requestNext = useCallback(() => {
-    if (activeSpot) {
-      // Already mid-exit (a tap landed while the swing from a previous
-      // request was still playing) — ignore it rather than restart or
-      // overlap the animation.
-      if (exitDirection) return;
-      if (activeSpot.arrivedFrom === "forward") {
-        // Continue through it: play the exit swing toward "forward", then
-        // perform the real flip that was deferred when the spot first
-        // appeared, landing on the true next page — handleRealPageChange
-        // will record the exact result as this spot's firstPageAfter.
-        beginSpotExit("forward", "next", activeSpot.spot);
-      } else {
-        // Arrived going backward: a forward turn from here cancels back
-        // out to the real page already showing (the one just after the
-        // spot) — same "forward" exit swing, but no real flip follows.
-        beginSpotExit("forward", null);
-      }
-      return;
-    }
-    const hit = spots.find((s) => currentPage === s.beforePage && currentPage < s.firstPageAfter);
-    if (hit) {
-      setActiveSpot({ spot: hit, arrivedFrom: "forward" });
-      return;
-    }
     flipbookRef.current?.next();
-  }, [activeSpot, exitDirection, spots, currentPage, beginSpotExit]);
-
+  }, []);
   const requestPrev = useCallback(() => {
-    if (activeSpot) {
-      if (exitDirection) return;
-      if (activeSpot.arrivedFrom === "backward") {
-        // Continue through it going backward: play the exit swing toward
-        // "backward", then perform the deferred real flip, landing back on
-        // the real page just before the spot.
-        beginSpotExit("backward", "prev");
-      } else {
-        // Arrived going forward: a backward turn from here cancels back
-        // out to the real page already showing (the one just before the
-        // spot) — same "backward" exit swing, but no real flip follows.
-        beginSpotExit("backward", null);
-      }
-      return;
-    }
-    const hit = spots.find((s) => currentPage === s.firstPageAfter);
-    if (hit) {
-      setActiveSpot({ spot: hit, arrivedFrom: "backward" });
-      return;
-    }
     flipbookRef.current?.prev();
-  }, [activeSpot, exitDirection, spots, currentPage, beginSpotExit]);
+  }, []);
 
-  const noop = useCallback(() => {}, []);
   useKeyboardShortcuts({
     onPrevPage: requestPrev,
     onNextPage: requestNext,
-    onZoomIn: activeSpot ? noop : zoomIn,
-    onZoomOut: activeSpot ? noop : zoomOut,
+    onZoomIn: onAdPage ? undefined : zoomIn,
+    onZoomOut: onAdPage ? undefined : zoomOut,
     onCloseOverlay: () => {
-      if (activeSpot) {
-        // Escape always just cancels, never performs a real flip — exiting
-        // back the same way the reader arrived, like closing the same door
-        // that opened.
-        if (!exitDirection) beginSpotExit(activeSpot.arrivedFrom === "forward" ? "backward" : "forward", null);
-        return;
-      }
       if (zoom !== ZOOM_MIN) resetZoom();
     },
   });
@@ -397,13 +266,13 @@ export function Reader({
   // next to the effect that loads the PDF's metadata.)
 
   // Shared by the mobile header and the toolbar (both floating overlays on
-  // mobile — see the markup below): forced visible whenever the full-page
-  // interstitial is up, same reasoning as the toolbar always had on its
-  // own — the reader's only way to leave the ad is a prev/next turn, and
-  // the inactivity auto-hide doesn't know that; left alone, staring at the
-  // ad for a few seconds without moving the mouse would fade the only
-  // controls that get them out of it.
-  const controlsVisible = activeSpot ? true : toolbarVisible;
+  // mobile — see the markup below): forced visible whenever a full-page
+  // sponsor slot is on screen, same reasoning as the toolbar always had on
+  // its own — the reader's only way past it is a prev/next turn, and the
+  // inactivity auto-hide doesn't know that; left alone, staring at the ad
+  // for a few seconds without moving the mouse would fade the only controls
+  // that get past it.
+  const controlsVisible = onAdPage ? true : toolbarVisible;
 
   return (
     <div ref={containerRef} className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#05070a]">
@@ -476,14 +345,16 @@ export function Reader({
                   ref={flipbookRef}
                   manager={manager}
                   pageCount={numPages}
+                  spots={spots}
                   initialPage={currentPage}
                   baseWidth={baseSize.width}
                   baseHeight={baseSize.height}
                   renderScale={baseScale}
                   isMobile={isMobile}
                   reduceMotion={reduceMotion}
-                  onPageChange={handleRealPageChange}
+                  onPageChange={setCurrentPage}
                   onGutterChange={setGutter}
+                  onFullPageActiveChange={handleFullPageActiveChange}
                   onRequestNext={requestNext}
                   onRequestPrev={requestPrev}
                 />
@@ -519,19 +390,6 @@ export function Reader({
                     </div>
                   </div>
                 </div>
-              )}
-
-              {activeSpot && fullPageBox && (
-                <FullPageSponsorAd
-                  sponsor={activeSpot.spot.sponsor}
-                  pageBox={fullPageBox}
-                  isSpread={gutter?.isSpread ?? false}
-                  reduceMotion={reduceMotion}
-                  arrivedFrom={activeSpot.arrivedFrom}
-                  exitDirection={exitDirection}
-                  onAdvance={requestNext}
-                  onCancel={requestPrev}
-                />
               )}
             </div>
 

@@ -22,7 +22,7 @@ function isBannerSponsor(sponsor: Sponsor): sponsor is BannerSponsor {
  * SPONSOR_DRAW_WEIGHT) means it fills 3 tickets per candidate against
  * Light's 1, without ever fully excluding Light from the draw. Only the
  * rotating-banner categories (light/premium) participate — "fullpage" is a
- * separate placement entirely (see FullPageSponsorAd). */
+ * separate placement entirely (see @/lib/fullPageSpots). */
 export function pickWeightedSponsor(candidates: BannerSponsor[]): BannerSponsor | null {
   if (candidates.length === 0) return null;
   const tickets = candidates.flatMap((sponsor) => Array(sponsorDrawWeight(sponsor.category)).fill(sponsor));

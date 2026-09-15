@@ -3,27 +3,24 @@ import { FULLPAGE_MIN_EDGE_PAGES, FULLPAGE_MIN_SPACING_PAGES } from "@/config/sp
 
 /**
  * A full-page sponsor placement fixed to a specific spot in this edition's
- * page sequence for the current reading session — see the module doc below
- * for the model this replaces and why.
+ * page sequence for the current reading session — inserted as a genuine
+ * page (or two, in a two-page spread — see Flipbook's sequence builder)
+ * right after `beforePage`, so react-pageflip turns it with exactly the
+ * same engine, timing and shadow rendering as every other page. An earlier
+ * version faked this with a CSS overlay instead; it never quite matched a
+ * real page turn (different-looking entry/exit, a visible gap during the
+ * swing, a tap zone that could double as the sponsor's own link) — hence
+ * moving it into the book's actual page list.
  */
 export type FullPageSpot = {
   /** The sponsor id — also this spot's stable identity. */
   id: string;
   sponsor: Sponsor;
   /** The real page immediately *before* the spot, moving forward — e.g. 4
-   * means "between real page 4 (or the 4-5 spread) and whatever page comes
-   * next, there's a spot here." Always an even number (or the implicit
-   * first boundary), so it's a real, reachable `currentPage` value in BOTH
-   * single-page and two-page-spread display modes (see the doc comment on
-   * `isPassed` in Reader.tsx for why that constraint matters). */
+   * means "the ad is inserted right after real page 4". Always an even
+   * number (or the implicit first boundary), so on a two-page spread it
+   * always lands exactly on a spread boundary rather than splitting one. */
   beforePage: number;
-  /** The real page immediately *after* the spot. Starts as a same-session
-   * best guess (see `estimateFirstPageAfter`) and gets overwritten with the
-   * exact observed value the first time the reader actually flips forward
-   * through this spot for real — from then on it's exact for the rest of
-   * the session, which is what lets the spot reappear correctly if the
-   * reader later flips back over the same boundary from far away. */
-  firstPageAfter: number;
 };
 
 /** Serializable shape for sessionStorage — just enough to rebuild a
@@ -35,22 +32,13 @@ export function eligibleFullPageSponsors(sponsors: Sponsor[]): Sponsor[] {
   return sponsors.filter((s) => s.category === "fullpage" && s.status === "active" && s.fullPageImageUrl);
 }
 
-function estimateFirstPageAfter(beforePage: number, isMobile: boolean): number {
-  // Single-page mode visits every page number one at a time; two-page
-  // spread mode shows (2,3), (4,5), (6,7)... so the page right after
-  // beforePage is two higher, not one — except coming off the lone cover
-  // (beforePage === 1), which is always followed by page 2 either way.
-  if (beforePage <= 1) return 2;
-  return beforePage + (isMobile ? 1 : 2);
-}
-
 /** Picks fixed, randomized positions for however many full-page sponsors
  * are currently eligible, spread across this edition's real pages with
  * some minimum breathing room at each edge and between one another. Pure
  * and deterministic-shape (only Math.random is impure) so it's easy to
  * call once per edition-open and persist the result — see
  * sponsorFullPageStorage.ts. */
-export function pickFullPageSpots(numPages: number, sponsors: Sponsor[], isMobile: boolean): FullPageSpot[] {
+export function pickFullPageSpots(numPages: number, sponsors: Sponsor[]): FullPageSpot[] {
   const eligible = eligibleFullPageSponsors(sponsors);
   if (eligible.length === 0) return [];
 
@@ -75,7 +63,6 @@ export function pickFullPageSpots(numPages: number, sponsors: Sponsor[], isMobil
     id: shuffledSponsors[i].id,
     sponsor: shuffledSponsors[i],
     beforePage,
-    firstPageAfter: estimateFirstPageAfter(beforePage, isMobile),
   }));
 }
 
@@ -86,19 +73,14 @@ export function toStoredSpots(spots: FullPageSpot[]): StoredFullPageSpot[] {
 /** Rehydrates a previously-stored layout against the *current* sponsors
  * list, dropping any spot whose sponsor is no longer active/eligible (e.g.
  * paused mid-session from /admin) rather than showing a stale sponsor. */
-export function fromStoredSpots(stored: StoredFullPageSpot[], sponsors: Sponsor[], isMobile: boolean): FullPageSpot[] {
+export function fromStoredSpots(stored: StoredFullPageSpot[], sponsors: Sponsor[]): FullPageSpot[] {
   const eligible = eligibleFullPageSponsors(sponsors);
   const byId = new Map(eligible.map((s) => [s.id, s]));
   const spots: FullPageSpot[] = [];
   for (const entry of stored) {
     const sponsor = byId.get(entry.sponsorId);
     if (!sponsor) continue;
-    spots.push({
-      id: sponsor.id,
-      sponsor,
-      beforePage: entry.beforePage,
-      firstPageAfter: estimateFirstPageAfter(entry.beforePage, isMobile),
-    });
+    spots.push({ id: sponsor.id, sponsor, beforePage: entry.beforePage });
   }
   return spots;
 }

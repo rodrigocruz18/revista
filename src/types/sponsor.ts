@@ -5,10 +5,11 @@
  *  - "light" / "premium": rotate through the banner slot (horizontal strip
  *    on mobile, vertical column on desktop) — see @/config/sponsors for the
  *    probability/exposure-time difference between the two.
- *  - "fullpage": a separate, higher-tier placement that simulates one extra
- *    page of the magazine, shown once per reading session as an overlay on
- *    top of a real page turn (never inserted into the actual page count —
- *    see FullPageSponsorAd).
+ *  - "fullpage": a separate, higher-tier placement — one or two fixed spots
+ *    per edition/session, inserted as genuine pages directly in the book's
+ *    own page sequence (see @/lib/fullPageSpots and the Flipbook*Page
+ *    components), so they turn with exactly the same engine as every real
+ *    page instead of an overlay imitating one.
  *
  * Only the images relevant to a sponsor's category are ever populated —
  * a "light"/"premium" sponsor has horizontalImageUrl/verticalImageUrl, a

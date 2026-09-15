@@ -38,7 +38,7 @@ export function Toolbar({
   // shadow) instead of a plain border-white/10 — the floating variant sits
   // over a light PDF page most of the time, where even a faint dark pill
   // reads fine, but it also has to stay legible over the full-page
-  // sponsor's dark filler "page" (see FullPageSponsorAd), whose near-black
+  // sponsor's dark filler page (see FlipbookFillerPage), whose near-black
   // tone is close enough to this pill's own that a subtle border used to
   // disappear into it almost completely — the glow keeps it readable
   // against either, even at the lower `translucent` opacity.
@@ -60,11 +60,6 @@ export function Toolbar({
   return (
     <div
       className={cn(
-        // z-50: above the full-page sponsor interstitial's own z-40 (see
-        // FullPageSponsorAd) — without this the pill was being painted
-        // *behind* that overlay's opaque fake "page" wherever the two
-        // happened to overlap, effectively hiding it completely rather
-        // than just blending into it.
         "pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-3 pb-3 transition-all duration-300",
         visible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
       )}
