@@ -16,12 +16,12 @@ import { FullPageSponsorAd, type PageBox } from "@/components/sponsors/FullPageS
 import { useMediaQuery, usePrefersReducedMotion } from "@/hooks/useMediaQuery";
 import { useKeyboardShortcuts } from "@/lib/keyboard";
 import { ZOOM_MAX, ZOOM_MIN, magazineConfig } from "@/config/magazine";
-import { FULLPAGE_TRIGGER_AFTER_TURNS } from "@/config/sponsors";
 import { clamp } from "@/lib/utils";
 import { loadEditionProgress, saveEditionProgress } from "@/lib/reader-storage";
 import { useAppLoading } from "@/components/intro/AppLoadingContext";
 import { useSponsorRotation } from "@/lib/sponsorRotation";
-import { hasSeenFullPageAd, markFullPageAdSeen } from "@/lib/sponsorFullPageStorage";
+import { type FullPageSpot, fromStoredSpots, pickFullPageSpots, toStoredSpots } from "@/lib/fullPageSpots";
+import { loadFullPageSpotLayout, saveFullPageSpotLayout } from "@/lib/sponsorFullPageStorage";
 
 export function Reader({
   edition,
@@ -73,54 +73,51 @@ export function Reader({
     ? { left: gutter.left, top: gutter.top, width: gutter.visibleWidth, height: gutter.visibleHeight }
     : null;
 
-  const [pageTurnCount, setPageTurnCount] = useState(0);
-  // Two-state model for the "fake page turn" interstitial (see
-  // FullPageSponsorAd's doc comment): `armedFullPageSponsor` means it's
-  // ready to appear on the reader's *next* forward turn, but nothing is
-  // showing yet — the real book keeps behaving completely normally until
-  // that turn happens. `fullPageSponsor` means the fake page is actually up
-  // right now. Splitting these is what lets the interstitial intercept
-  // exactly one forward turn (see requestNext below) instead of jumping in
-  // immediately the instant it becomes eligible, which would fire mid
-  // page-flip-animation.
-  const [armedFullPageSponsor, setArmedFullPageSponsor] = useState<Sponsor | null>(null);
-  const [fullPageSponsor, setFullPageSponsor] = useState<Sponsor | null>(null);
-  const fullPageTriggeredRef = useRef(false);
+  // ---- Full-page sponsor: fixed spots in the page sequence (see
+  // fullPageSpots.ts's doc comment for the model). `spots` is this
+  // edition's randomized layout for the session; `activeSpot` is whichever
+  // one is currently showing as a fake page, plus which direction the
+  // reader crossed into it from (which side "continues" through it for
+  // real vs. just cancels back out — see requestNext/requestPrev below).
+  const [spots, setSpots] = useState<FullPageSpot[]>([]);
+  const spotsInitializedRef = useRef(false);
+  const [activeSpot, setActiveSpot] = useState<{ spot: FullPageSpot; arrivedFrom: "forward" | "backward" } | null>(
+    null,
+  );
   const fullPageActiveRef = useRef(false);
   useEffect(() => {
-    fullPageActiveRef.current = fullPageSponsor !== null;
-  }, [fullPageSponsor]);
+    fullPageActiveRef.current = activeSpot !== null;
+  }, [activeSpot]);
+
+  // A spot only learns its *exact* firstPageAfter (see fullPageSpots.ts)
+  // once the reader actually flips forward through it for real — this ref
+  // hands that off from requestNext (which triggers the flip) to
+  // handleRealPageChange (which sees the flip's real result).
+  const learningSpotRef = useRef<FullPageSpot | null>(null);
+
+  useEffect(() => {
+    if (!numPages || spotsInitializedRef.current) return;
+    spotsInitializedRef.current = true;
+    const stored = loadFullPageSpotLayout(edition.slug);
+    const restored = stored ? fromStoredSpots(stored, sponsors, isMobile) : [];
+    const layout = restored.length > 0 ? restored : pickFullPageSpots(numPages, sponsors, isMobile);
+    if (!stored || restored.length !== stored.length) saveFullPageSpotLayout(edition.slug, toStoredSpots(layout));
+    // Synchronizing with `numPages` becoming known for this edition, not
+    // something derivable during render (it also reads sessionStorage).
+    setSpots(layout);
+  }, [numPages, sponsors, edition.slug, isMobile]);
 
   // Only counts *real* flips (see the onPageChange wiring on <Flipbook> below)
   // — never the initial page the reader opened on, and never the direct
   // setCurrentPage() calls the wheel-zoom-entry handler makes further down.
   const handleRealPageChange = useCallback((page: number) => {
     setCurrentPage(page);
-    setPageTurnCount((count) => count + 1);
-  }, []);
-
-  useEffect(() => {
-    if (fullPageTriggeredRef.current) return;
-    if (pageTurnCount < FULLPAGE_TRIGGER_AFTER_TURNS) return;
-    if (hasSeenFullPageAd()) {
-      fullPageTriggeredRef.current = true;
-      return;
+    if (learningSpotRef.current) {
+      const spot = learningSpotRef.current;
+      learningSpotRef.current = null;
+      setSpots((prev) => prev.map((s) => (s.id === spot.id ? { ...s, firstPageAfter: page } : s)));
     }
-    const eligible = sponsors.filter(
-      (s) => s.category === "fullpage" && s.status === "active" && s.fullPageImageUrl,
-    );
-    if (eligible.length === 0) return;
-    fullPageTriggeredRef.current = true;
-    const picked = eligible[Math.floor(Math.random() * eligible.length)];
-    // Only ARM it here — "seen" is recorded once it's actually shown (see
-    // requestNext), not the moment it becomes eligible, so a reader who
-    // never turns the page again this session genuinely never saw it.
-    // A legitimate effect: this is synchronizing with `pageTurnCount`
-    // crossing the trigger threshold (an external-ish signal driven by real
-    // page-flip events), not something derivable during render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setArmedFullPageSponsor(picked);
-  }, [pageTurnCount, sponsors]);
+  }, []);
 
   // ---- Load document metadata + resolve the page we should open on. -----
   useEffect(() => {
@@ -132,6 +129,9 @@ export function Reader({
     setNumPages(null);
     setLoadError(null);
     setInitialPage(null);
+    spotsInitializedRef.current = false;
+    setSpots([]);
+    setActiveSpot(null);
 
     // Tells the splash's loading phase (see LogoIntro/IntroGate) there's
     // real work to wait for — on the very first load of a browser session
@@ -263,48 +263,76 @@ export function Reader({
   // onRequestNext/onRequestPrev), keyboard arrows, and the toolbar buttons —
   // funnels through these two functions instead of calling flipbookRef
   // directly, which is what makes it possible to intercept a turn gesture
-  // and show the fake interstitial page in place of a real flip, regardless
-  // of which input method triggered it.
+  // and show a spot's fake page in place of a real flip, regardless of
+  // which input method triggered it.
+  //
+  // A spot is "passed" once currentPage has reached its (exact-once-learned,
+  // best-guess until then — see fullPageSpots.ts) firstPageAfter. Comparing
+  // real page numbers this way, rather than counting flips, is what makes
+  // the trigger direction-agnostic: it fires the same way whether the
+  // reader arrives at the boundary by flipping forward into it or backward
+  // into it, and correctly stays quiet for a spot the reader is nowhere
+  // near, however long ago they last crossed it.
   const requestNext = useCallback(() => {
-    if (fullPageSponsor) {
-      // The interstitial is already up: this turn dismisses it and performs
-      // the real flip that was deferred when it first appeared, landing on
-      // whatever the true next page actually is.
-      setFullPageSponsor(null);
-      flipbookRef.current?.next();
+    if (activeSpot) {
+      if (activeSpot.arrivedFrom === "forward") {
+        // Continue through it: perform the real flip that was deferred
+        // when the spot first appeared, landing on the true next page —
+        // handleRealPageChange will record the exact result as this
+        // spot's firstPageAfter.
+        learningSpotRef.current = activeSpot.spot;
+        setActiveSpot(null);
+        flipbookRef.current?.next();
+      } else {
+        // Arrived going backward: a forward turn from here cancels back
+        // out to the real page already showing (the one just after the
+        // spot) — no real flip.
+        setActiveSpot(null);
+      }
       return;
     }
-    if (armedFullPageSponsor) {
-      // First forward turn since arming: show the fake page instead of
-      // flipping for real — the real page underneath doesn't move.
-      const picked = armedFullPageSponsor;
-      setArmedFullPageSponsor(null);
-      setFullPageSponsor(picked);
-      markFullPageAdSeen();
+    const hit = spots.find((s) => currentPage === s.beforePage && currentPage < s.firstPageAfter);
+    if (hit) {
+      setActiveSpot({ spot: hit, arrivedFrom: "forward" });
       return;
     }
     flipbookRef.current?.next();
-  }, [fullPageSponsor, armedFullPageSponsor]);
+  }, [activeSpot, spots, currentPage]);
 
   const requestPrev = useCallback(() => {
-    if (fullPageSponsor) {
-      // Cancel: return to whatever real page was already showing, with no
-      // real flip — the interstitial never touched the real page state.
-      setFullPageSponsor(null);
+    if (activeSpot) {
+      if (activeSpot.arrivedFrom === "backward") {
+        // Continue through it going backward: perform the deferred real
+        // flip, landing back on the real page just before the spot.
+        setActiveSpot(null);
+        flipbookRef.current?.prev();
+      } else {
+        // Arrived going forward: a backward turn from here cancels back
+        // out to the real page already showing (the one just before the
+        // spot) — no real flip.
+        setActiveSpot(null);
+      }
+      return;
+    }
+    const hit = spots.find((s) => currentPage === s.firstPageAfter);
+    if (hit) {
+      setActiveSpot({ spot: hit, arrivedFrom: "backward" });
       return;
     }
     flipbookRef.current?.prev();
-  }, [fullPageSponsor]);
+  }, [activeSpot, spots, currentPage]);
 
   const noop = useCallback(() => {}, []);
   useKeyboardShortcuts({
     onPrevPage: requestPrev,
     onNextPage: requestNext,
-    onZoomIn: fullPageSponsor ? noop : zoomIn,
-    onZoomOut: fullPageSponsor ? noop : zoomOut,
+    onZoomIn: activeSpot ? noop : zoomIn,
+    onZoomOut: activeSpot ? noop : zoomOut,
     onCloseOverlay: () => {
-      if (fullPageSponsor) {
-        requestPrev();
+      if (activeSpot) {
+        // Escape always just cancels, whichever direction the reader
+        // arrived from — never performs a real flip.
+        setActiveSpot(null);
         return;
       }
       if (zoom !== ZOOM_MIN) resetZoom();
@@ -422,9 +450,9 @@ export function Reader({
                 </div>
               )}
 
-              {fullPageSponsor && fullPageBox && (
+              {activeSpot && fullPageBox && (
                 <FullPageSponsorAd
-                  sponsor={fullPageSponsor}
+                  sponsor={activeSpot.spot.sponsor}
                   pageBox={fullPageBox}
                   isSpread={gutter?.isSpread ?? false}
                   reduceMotion={reduceMotion}
@@ -479,7 +507,7 @@ export function Reader({
               that get them out of it. */}
           <div className="hidden md:block">
             <Toolbar
-              visible={fullPageSponsor ? true : toolbarVisible}
+              visible={activeSpot ? true : toolbarVisible}
               currentPage={currentPage}
               totalPages={numPages}
               onPrev={requestPrev}

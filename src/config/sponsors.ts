@@ -37,10 +37,16 @@ export const SPONSOR_INITIAL_DELAY_MS = 12_000;
  * the "paused while tab is hidden" behavior is granular to. */
 export const SPONSOR_TICK_MS = 500;
 
-/** Real page turns (in either direction) the reader must make before the
- * full-page sponsor is allowed to appear — never on the very first pages,
- * and only once per session even if the reader keeps flipping past it. */
-export const FULLPAGE_TRIGGER_AFTER_TURNS = 5;
+/** Full-page sponsors get fixed positions in the page sequence, randomized
+ * once per edition per session (see fullPageSpots.ts) rather than a single
+ * one-time popup — like a real inserted ad page, they reappear every time
+ * the reader flips past that point. These two knobs keep those positions
+ * from landing right at the cover/back page or crowding each other:
+ * `FULLPAGE_MIN_EDGE_PAGES` is the minimum real-page runway kept clear at
+ * the very start and end of the edition; `FULLPAGE_MIN_SPACING_PAGES` is
+ * the minimum gap kept between two different spots. */
+export const FULLPAGE_MIN_EDGE_PAGES = 4;
+export const FULLPAGE_MIN_SPACING_PAGES = 4;
 
 /** Exact pixel dimensions required for the two rotating-banner images.
  * Double the common 320x100 / 300x600 ad-slot sizes so they stay crisp on
