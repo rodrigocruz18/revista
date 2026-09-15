@@ -275,18 +275,26 @@ export function Reader({
         <Preloader editionLabel={edition.editionLabel} />
       ) : (
         <>
-          <div className="pointer-events-none fixed inset-x-0 top-0 z-30 flex items-center justify-between px-4 py-3 sm:px-6">
-            <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-white backdrop-blur-md">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/brand/ace-tenis-logo.png" alt={magazineConfig.shortName} className="h-8 w-auto sm:h-10" />
-              <span className="hidden text-xs text-white/40 sm:inline">· {edition.editionLabel}</span>
+          <div className="pointer-events-none fixed inset-x-0 top-0 z-30">
+            {/* A soft dark-to-transparent scrim behind the whole header band
+                (not just the logo chip) — the sponsor banner now sits close
+                enough to the top that the header needs to stay legible and
+                clearly "in front" of it regardless of what's rendered below,
+                not rely on the page/banner behind it happening to be dark. */}
+            <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/70 via-black/25 to-transparent sm:h-28" />
+            <div className="relative flex items-center justify-between px-4 py-3 sm:px-6">
+              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-3 py-1.5 text-white shadow-[0_8px_24px_-6px_rgba(0,0,0,0.65)] backdrop-blur-md">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/brand/ace-tenis-logo.png" alt={magazineConfig.shortName} className="h-8 w-auto sm:h-10" />
+                <span className="hidden text-xs text-white/50 sm:inline">· {edition.editionLabel}</span>
+              </div>
+              <Link
+                href="/archivo"
+                className="pointer-events-auto rounded-full border border-white/10 bg-black/60 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-white/80 shadow-[0_8px_24px_-6px_rgba(0,0,0,0.65)] backdrop-blur-md transition hover:text-white"
+              >
+                Archivo
+              </Link>
             </div>
-            <Link
-              href="/archivo"
-              className="pointer-events-auto rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-white/80 backdrop-blur-md transition hover:text-white"
-            >
-              Archivo
-            </Link>
           </div>
 
           {/* min-h-0 cascades down this whole row: a flex child defaults to
@@ -306,10 +314,19 @@ export function Reader({
                 Reserving the column regardless of whether a sponsor is
                 currently showing (rest gap / initial delay) keeps the
                 flipbook's own width stable — nothing reflows when the
-                rotation swaps or goes quiet. */}
-            <div className="hidden shrink-0 items-center justify-center px-2 py-3 md:flex md:w-36 lg:w-44">
+                rotation swaps or goes quiet.
+                pt-24/28 clears the fixed header band above (see the scrim
+                added there) so the banner never starts flush against it —
+                items-center then centers the banner in whatever height is
+                left below that padding, not the column's full height. A
+                mirrored empty spacer of the exact same width sits after the
+                flipbook (below) so this column doesn't pull the book itself
+                off-center — without it, the book was centering only within
+                the *remaining* width to its right, shifting it visibly
+                right of true center. */}
+            <div className="hidden shrink-0 flex-col items-center justify-center px-3 pb-6 pt-24 sm:pt-28 md:flex md:w-40 lg:w-48">
               <div
-                className="relative h-full max-h-[78vh] w-full"
+                className="relative h-full max-h-[70vh] w-full"
                 data-sponsor-variant="vertical"
                 style={{ aspectRatio: "600 / 1200" }}
               >
@@ -353,6 +370,16 @@ export function Reader({
                 <FullPageSponsorAd sponsor={fullPageSponsor} onDismiss={dismissFullPageAd} reduceMotion={reduceMotion} />
               )}
             </div>
+
+            {/* Empty spacer, exactly mirroring the sponsor column's width on
+                the other side of the flipbook. Purely for balance: without
+                it the flipbook's flex-1 box only spans from the sponsor
+                column to the right edge, so it centers itself within that
+                narrower box instead of the true viewport — visibly shifting
+                the whole magazine right of center. This keeps the magazine
+                itself always centered regardless of whether a sponsor is
+                showing. */}
+            <div className="hidden shrink-0 md:block md:w-40 lg:w-48" aria-hidden="true" />
 
             {/* Mobile: horizontal sponsor strip right below the magazine.
                 Same reserved-space reasoning as the vertical column above. */}
