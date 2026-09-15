@@ -179,28 +179,32 @@ export function ZoomedPageView({
   // order: `fitSize` depends on `containerSize`, which is only known once
   // the ResizeObserver above has fired at least once, and that can lag
   // behind `ready` flipping true (e.g. an already-cached PDF render, or the
-  // sponsor branch above, which flips it on the very next tick). Centering
-  // only when `ready` first turns true — as this used to, entirely inside
-  // the render's own `.then()` — raced that measurement: if the container
-  // size actually arrived *after*, the canvas kept its native, CSS-unsized
-  // dimensions (`displayWidth`/`displayHeight` are 0 until `fitSize`
-  // exists) at the moment the old code centered it, and the scroll offset
-  // it computed then went stale the instant `fitSize` showed up and the
-  // canvas snapped down to its real on-screen size — the browser just
-  // clamps that now-too-large `scrollLeft` down to whatever the new,
-  // smaller `scrollWidth` allows, which is its rightmost valid position,
-  // not the center. That's what read as "the zoomed page opens skewed to
-  // the right." Re-running this whenever `fitSize` changes too (not only
-  // on a fresh target) — guarded by `pendingCenterRef` so it fires exactly
-  // once per target — catches the case where the measurement lands late.
+  // sponsor branch above, which flips it on the very next tick).
+  //
+  // The centered offset below is computed straight from React state
+  // (`displayWidth`/`displayHeight`, `containerSize`) rather than read back
+  // from the DOM's own `scrollWidth`/`clientWidth` — a previous version did
+  // the latter, and it raced the canvas's *imperative* `canvas.width` /
+  // `canvas.height` assignment above: that mutation happens outside React's
+  // render cycle, so it can change the scrollable div's `scrollWidth`
+  // without the ResizeObserver (which only watches the container's own
+  // box, not its content/scroll size) ever re-firing to prompt a recompute.
+  // Reading the DOM at the "wrong" instant meant the computed offset didn't
+  // always match what actually got centered on screen — which is what read
+  // as "sometimes it centers, sometimes it's skewed to the right," with no
+  // obvious pattern (it depended on exactly when the browser happened to
+  // apply each mutation, not on anything the reader did). Deriving the
+  // target scrollLeft/Top from the same numbers that already drive the
+  // canvas/img's own on-screen size and the padding around it removes the
+  // DOM read — and the race — entirely.
   useLayoutEffect(() => {
-    if (!pendingCenterRef.current || !ready || !fitSize) return;
+    if (!pendingCenterRef.current || !ready || !fitSize || !containerSize) return;
     const scroller = scrollRef.current;
     if (!scroller) return;
     pendingCenterRef.current = false;
-    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) / 2;
-    scroller.scrollTop = 0;
-  }, [ready, fitSize]);
+    scroller.scrollLeft = displayWidth > containerSize.width ? (displayWidth - containerSize.width) / 2 : 0;
+    scroller.scrollTop = displayHeight > containerSize.height ? (displayHeight - containerSize.height) / 2 : 0;
+  }, [ready, fitSize, containerSize, displayWidth, displayHeight]);
 
   // Runs whenever `zoom` actually changes. If that change came from a wheel
   // tick (see handleWheel), re-anchor the scroll position so the point that

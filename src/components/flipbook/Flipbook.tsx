@@ -20,10 +20,13 @@ import { clamp } from "@/lib/utils";
 
 /** Whatever is visually under a given viewport point, resolved by
  * `zoomTargetAtPoint` below — either a real PDF page, or a full-page
- * sponsor slot (ad or its blank filler companion; both resolve to the same
- * sponsor, since visually they're one spread). Lets a parent zoom into
- * whichever one the reader actually pointed at, sponsor pages included,
- * instead of only ever supporting real pages. */
+ * sponsor ad. Lets a parent zoom into whichever one the reader actually
+ * pointed at, sponsor pages included, instead of only ever supporting real
+ * pages. Pointing at the ad's blank filler companion (the right half of a
+ * desktop spread — see FlipbookFillerPage) resolves to `null`, same as
+ * pointing off the book entirely: there's nothing there to zoom into, real
+ * or otherwise, so a parent should treat it as "nothing to do" rather than
+ * falling back to whatever was last zoomed. */
 export type ZoomTarget = { kind: "real"; page: number } | { kind: "ad"; sponsor: Sponsor };
 
 export type FlipbookHandle = {
@@ -375,10 +378,14 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
         const entry = sequence[bookPos - 1];
         if (!entry) return null;
         if (entry.kind === "real") return { kind: "real", page: entry.page };
-        // "ad" and "filler" (the blank back of a spread, desktop-only) both
-        // resolve to the same sponsor — visually they're one placement, so
-        // pointing at either half zooms into the sponsor's own page.
-        return { kind: "ad", sponsor: entry.spot.sponsor };
+        if (entry.kind === "ad") return { kind: "ad", sponsor: entry.spot.sponsor };
+        // "filler" — the blank, data-less back of a spread, desktop-only —
+        // has nothing to zoom into. Returning null here (rather than the
+        // spot's sponsor, as an earlier version did) is what actually
+        // matters: without it, pointing at the blank half zoomed into the
+        // ad anyway, which read as the ad "leaking" onto a page that isn't
+        // it.
+        return null;
       },
     }),
     [

@@ -236,25 +236,33 @@ export function Reader({
       if (zoomRef.current > ZOOM_MIN) return;
       e.preventDefault();
       const next = zoomRef.current - e.deltaY * 0.0015;
-      if (next > ZOOM_MIN) {
-        // Entering zoom: `currentPage` is whatever react-pageflip's onFlip
-        // last reported, which for a two-page spread is always the LEFT
-        // page — so scrolling to zoom while pointing at the right-hand page
-        // used to open the zoom on the left one instead (reported bug).
-        // Resolve whatever's actually under the cursor from the book's own
-        // layout geometry — a real page, or a full-page sponsor slot (which
-        // used to be skipped entirely here, so scrolling to zoom over an ad
-        // silently zoomed into whichever real page was last tracked instead
-        // — also reported, now fixed by handling it the same way) — and
-        // switch to it before the zoom view mounts, so it opens on whatever
-        // was actually under the pointer.
-        const target = flipbookRef.current?.zoomTargetAtPoint(e.clientX, e.clientY);
-        if (target?.kind === "real") {
-          setCurrentPage(target.page);
-          setZoomSponsor(null);
-        } else if (target?.kind === "ad") {
-          setZoomSponsor(target.sponsor);
-        }
+      if (next <= ZOOM_MIN) {
+        setZoomClamped(next);
+        return;
+      }
+      // Entering zoom: `currentPage` is whatever react-pageflip's onFlip
+      // last reported, which for a two-page spread is always the LEFT
+      // page — so scrolling to zoom while pointing at the right-hand page
+      // used to open the zoom on the left one instead (reported bug).
+      // Resolve whatever's actually under the cursor from the book's own
+      // layout geometry — a real page, or a full-page sponsor ad (which
+      // used to be skipped entirely here, so scrolling to zoom over an ad
+      // silently zoomed into whichever real page was last tracked instead
+      // — also reported, now fixed by handling it the same way) — and
+      // switch to it before the zoom view mounts, so it opens on whatever
+      // was actually under the pointer. A null target means there's
+      // nothing there to zoom into — off the book entirely, or the ad's
+      // blank "no data" filler half (see zoomTargetAtPoint's own doc
+      // comment) — so the tick is ignored outright instead of opening zoom
+      // on whatever was last tracked, which used to leak the neighboring
+      // ad in here too.
+      const target = flipbookRef.current?.zoomTargetAtPoint(e.clientX, e.clientY);
+      if (!target) return;
+      if (target.kind === "real") {
+        setCurrentPage(target.page);
+        setZoomSponsor(null);
+      } else {
+        setZoomSponsor(target.sponsor);
       }
       setZoomClamped(next);
     }
