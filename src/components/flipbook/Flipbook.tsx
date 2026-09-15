@@ -18,6 +18,17 @@ export type FlipbookHandle = {
   goToPage: (pageNumber: number) => void;
   next: () => void;
   prev: () => void;
+  /**
+   * Which page is visually under a given viewport point right now — the
+   * left or right half of a two-page spread resolve to different page
+   * numbers. Used when the user starts zooming with the mouse wheel, so the
+   * zoom opens on whichever page they were actually pointing at instead of
+   * always the spread's nominal "current" page (react-pageflip's onFlip only
+   * ever reports the left page of a spread, which is what made zooming
+   * while pointing at the right-hand page visibly jump to the left one).
+   * Returns null if the point isn't over the book at all.
+   */
+  pageAtPoint: (clientX: number, clientY: number) => number | null;
 };
 
 export type FlipbookProps = {
@@ -137,47 +148,30 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
     return bookRef.current?.pageFlip?.() ?? null;
   }, []);
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      goToPage: (pageNumber: number) => {
-        const clamped = Math.max(1, Math.min(pageCount, pageNumber));
-        // turnToPage() jumps instantly without going through the flip
-        // controller, so — unlike flipNext/flipPrev — it never fires
-        // onFlip. Update our own window-tracking state directly so the
-        // newly-visible page renders immediately.
-        getController()?.turnToPage(clamped - 1);
-        setActivePage(clamped);
-      },
-      next: () => getController()?.flipNext(),
-      prev: () => getController()?.flipPrev(),
-    }),
-    [getController, pageCount],
-  );
-
-  const handleFlip = useCallback(
-    (event: FlipEvent) => {
-      const pageNumber = event.data + 1;
-      setActivePage(pageNumber);
-      onPageChange(pageNumber);
-    },
-    [onPageChange],
-  );
-
-  const handleChangeOrientation = useCallback((event: OrientationEvent) => {
-    setOrientation(event.data);
-  }, []);
-
-  const pages = useMemo(
-    () => Array.from({ length: pageCount }, (_, i) => i + 1),
-    [pageCount],
-  );
-
   // A lone hard cover/back page only fills half of the book's double-wide
   // landscape block (react-pageflip anchors the cover to the right, the
   // back page to the left) — shift the whole block by half a page so the
   // one visible page lands dead-center instead of off to one side.
   const isEdgePage = activePage === 1 || activePage === pageCount;
+
+  // `activePage` is only guaranteed to be the LEFT page of its spread when
+  // it came from react-pageflip's own onFlip callback (handleFlip below) —
+  // that's its reporting convention. But `activePage` can also be set
+  // directly from outside (goToPage(), or this component's own `initialPage`
+  // prop on mount) with either parity, e.g. Reader hands back a page it
+  // resolved by pointing at the *right*-hand page of a spread while zooming.
+  // Every bit of layout math below (spread width, click zones, pageAtPoint)
+  // assumes a left-page anchor, so normalize to it here rather than trusting
+  // `activePage`'s parity — otherwise landing on an odd "activePage" made
+  // this component believe it was the left page of a spread with the next
+  // page as its right half, one page off from what's actually on screen.
+  const spreadLeftPage =
+    isEdgePage || orientation !== "landscape"
+      ? activePage
+      : activePage % 2 === 0
+        ? activePage
+        : activePage - 1;
+
   const centeringShift =
     bookSize && orientation === "landscape" && isEdgePage
       ? (activePage === 1 ? -1 : 1) * (bookSize.width / 2)
@@ -202,6 +196,70 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
   const showNavHints = !!bookSize && !!containerSize;
   const zoneTop = containerSize && bookSize ? (containerSize.height - visibleHeight) / 2 : 0;
   const zoneLeft = containerSize && bookSize ? (containerSize.width - visibleWidth) / 2 : 0;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      goToPage: (pageNumber: number) => {
+        const clamped = Math.max(1, Math.min(pageCount, pageNumber));
+        // turnToPage() jumps instantly without going through the flip
+        // controller, so — unlike flipNext/flipPrev — it never fires
+        // onFlip. Update our own window-tracking state directly so the
+        // newly-visible page renders immediately.
+        getController()?.turnToPage(clamped - 1);
+        setActivePage(clamped);
+      },
+      next: () => getController()?.flipNext(),
+      prev: () => getController()?.flipPrev(),
+      pageAtPoint: (clientX: number, clientY: number) => {
+        const rect = measureRef.current?.getBoundingClientRect();
+        if (!rect || !bookSize) return null;
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        if (y < zoneTop || y > zoneTop + visibleHeight) return null;
+        if (x < zoneLeft || x > zoneLeft + visibleWidth) return null;
+        if (orientation !== "landscape" || isEdgePage) {
+          // Only one page is actually visible (portrait/mobile, or a lone
+          // cover/back page) — no left/right ambiguity to resolve.
+          return clamp(activePage, 1, pageCount);
+        }
+        // Two-page spread: spreadLeftPage is the left page, +1 the right.
+        const isRightHalf = x >= zoneLeft + bookSize.width;
+        return clamp(isRightHalf ? spreadLeftPage + 1 : spreadLeftPage, 1, pageCount);
+      },
+    }),
+    [
+      getController,
+      pageCount,
+      bookSize,
+      orientation,
+      isEdgePage,
+      activePage,
+      spreadLeftPage,
+      zoneTop,
+      zoneLeft,
+      visibleWidth,
+      visibleHeight,
+    ],
+  );
+
+  const handleFlip = useCallback(
+    (event: FlipEvent) => {
+      const pageNumber = event.data + 1;
+      setActivePage(pageNumber);
+      onPageChange(pageNumber);
+    },
+    [onPageChange],
+  );
+
+  const handleChangeOrientation = useCallback((event: OrientationEvent) => {
+    setOrientation(event.data);
+  }, []);
+
+  const pages = useMemo(
+    () => Array.from({ length: pageCount }, (_, i) => i + 1),
+    [pageCount],
+  );
 
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -257,7 +315,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
             maxWidth={4000}
             minHeight={0}
             maxHeight={4000}
-            startPage={Math.max(0, activePage - 1)}
+            startPage={Math.max(0, spreadLeftPage - 1)}
             drawShadow
             flippingTime={reduceMotion ? 1 : 550}
             usePortrait={isMobile}
@@ -290,7 +348,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
             renderOnlyPageLengthChange={false}
           >
             {pages.map((pageNumber) => {
-              const shouldRender = Math.abs(pageNumber - activePage) <= RENDER_WINDOW;
+              const shouldRender = Math.abs(pageNumber - spreadLeftPage) <= RENDER_WINDOW;
               return (
                 <FlipbookPage
                   key={pageNumber}

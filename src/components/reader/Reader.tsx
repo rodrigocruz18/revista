@@ -157,7 +157,19 @@ export function Reader({ edition }: { edition: Magazine; allEditions: Magazine[]
     function onWheel(e: WheelEvent) {
       if (zoomRef.current > ZOOM_MIN) return;
       e.preventDefault();
-      setZoomClamped(zoomRef.current - e.deltaY * 0.0015);
+      const next = zoomRef.current - e.deltaY * 0.0015;
+      if (next > ZOOM_MIN) {
+        // Entering zoom: `currentPage` is whatever react-pageflip's onFlip
+        // last reported, which for a two-page spread is always the LEFT
+        // page — so scrolling to zoom while pointing at the right-hand page
+        // used to open the zoom on the left one instead (reported bug).
+        // Resolve the actual page under the cursor from the book's own
+        // layout geometry and switch to it before the zoom view mounts, so
+        // it opens on whichever page was actually under the pointer.
+        const pointedPage = flipbookRef.current?.pageAtPoint(e.clientX, e.clientY);
+        if (pointedPage) setCurrentPage(pointedPage);
+      }
+      setZoomClamped(next);
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
