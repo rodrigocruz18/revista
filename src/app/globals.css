@@ -476,3 +476,105 @@ body {
 .intro-overlay--reduced .intro-loading-glow {
   display: none;
 }
+
+/* ---- SponsorSlot: rotating banner (see components/sponsors) ----
+   Each rotation draw is a fresh mount (the parent keys it on the sponsor's
+   id — see SponsorSlot.tsx), so the entrance animation replays every time a
+   new sponsor comes on screen, not just once. The shine sweep then keeps
+   repeating for as long as that sponsor stays up, "giving it life" without
+   being distracting (a soft diagonal highlight, not a strobe). */
+.sponsor-slot {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  animation: sponsorEnter 650ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.sponsor-slot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 42%, rgba(255, 255, 255, 0.32) 50%, transparent 58%);
+  transform: translateX(-130%);
+  animation: sponsorShine 4200ms ease-in-out infinite;
+  animation-delay: 850ms;
+  pointer-events: none;
+}
+
+@keyframes sponsorEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sponsorShine {
+  0%,
+  14% {
+    transform: translateX(-130%);
+  }
+  38%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+/* Reduced motion: keep the sponsor's arrival legible (a quick fade) but drop
+   the moving shine sweep entirely — same structural pattern as
+   .intro-overlay--reduced above. */
+.sponsor-slot--reduced {
+  animation: sponsorEnterReduced 200ms ease-out both;
+}
+@keyframes sponsorEnterReduced {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.sponsor-slot--reduced::after {
+  display: none;
+}
+
+/* ---- FullPageSponsorAd: the "pagina completa" interstitial ----
+   The backdrop fades in while the framed image arrives with a touch of
+   scale/lift, echoing a page settling into place — deliberately calmer than
+   LogoIntro's reveal since this interrupts active reading. */
+.fullpage-ad {
+  animation: fullpageAdBackdrop 320ms ease-out both;
+}
+.fullpage-ad .fullpage-ad-frame {
+  animation: fullpageAdFrame 420ms cubic-bezier(0.22, 0.61, 0.36, 1) 60ms both;
+}
+
+@keyframes fullpageAdBackdrop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fullpageAdFrame {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.fullpage-ad--reduced {
+  animation: fullpageAdBackdrop 150ms ease-out both;
+}
+.fullpage-ad--reduced .fullpage-ad-frame {
+  animation: none;
+}

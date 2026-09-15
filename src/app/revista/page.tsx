@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { getAllEditions, getCurrentEdition } from "@/lib/magazines";
+import { getActiveSponsors } from "@/lib/sponsors";
 import { Reader } from "@/components/reader/Reader";
 import { Preloader } from "@/components/ui/Preloader";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -30,9 +31,11 @@ export default async function RevistaPage() {
     );
   }
 
+  const sponsors = await getActiveSponsors();
+
   return (
     <Suspense fallback={<Preloader editionLabel={edition.editionLabel} />}>
-      <Reader edition={edition} allEditions={allEditions} />
+      <Reader edition={edition} allEditions={allEditions} sponsors={sponsors} />
     </Suspense>
   );
 }

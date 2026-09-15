@@ -5,9 +5,12 @@ import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
 import { MONTHS_ES } from "@/config/magazine";
 import type { Magazine } from "@/types/magazine";
+import type { Sponsor } from "@/types/sponsor";
+import { SponsorsAdmin } from "@/components/admin/SponsorsAdmin";
 
 type Props = {
   initialEditions: Magazine[];
+  initialSponsors: Sponsor[];
   blobConfigured: boolean;
 };
 
@@ -15,7 +18,7 @@ type UploadStage = "idle" | "pdf" | "cover" | "saving" | "done";
 
 const currentYear = () => new Date().getFullYear();
 
-export function AdminDashboard({ initialEditions, blobConfigured }: Props) {
+export function AdminDashboard({ initialEditions, initialSponsors, blobConfigured }: Props) {
   const router = useRouter();
   const [editions, setEditions] = useState(initialEditions);
   const [year, setYear] = useState(() => String(currentYear()));
@@ -312,6 +315,8 @@ export function AdminDashboard({ initialEditions, blobConfigured }: Props) {
             </ul>
           )}
         </section>
+
+        <SponsorsAdmin initialSponsors={initialSponsors} blobConfigured={blobConfigured} />
       </div>
     </main>
   );

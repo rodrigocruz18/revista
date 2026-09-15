@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getAllEditions, getEditionBySlug } from "@/lib/magazines";
+import { getActiveSponsors } from "@/lib/sponsors";
 import { Reader } from "@/components/reader/Reader";
 import { Preloader } from "@/components/ui/Preloader";
 
@@ -17,9 +18,11 @@ export default async function EditionPage({ params }: PageProps<"/revista/[editi
 
   if (!edition) notFound();
 
+  const sponsors = await getActiveSponsors();
+
   return (
     <Suspense fallback={<Preloader editionLabel={edition.editionLabel} />}>
-      <Reader edition={edition} allEditions={allEditions} />
+      <Reader edition={edition} allEditions={allEditions} sponsors={sponsors} />
     </Suspense>
   );
 }

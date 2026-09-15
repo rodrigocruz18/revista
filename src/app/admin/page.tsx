@@ -1,6 +1,7 @@
 import { isAuthenticated } from "@/lib/adminAuth";
 import { isBlobConfigured } from "@/lib/blobManifest";
 import { getAllEditions } from "@/lib/magazines";
+import { readSponsorsManifest } from "@/lib/sponsorsManifest";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
 import { AdminLogin } from "@/components/admin/AdminLogin";
 import { magazineConfig } from "@/config/magazine";
@@ -27,6 +28,12 @@ export default async function AdminPage() {
     return <AdminLogin />;
   }
 
-  const editions = await getAllEditions();
-  return <AdminDashboard initialEditions={editions} blobConfigured={isBlobConfigured()} />;
+  const [editions, sponsors] = await Promise.all([getAllEditions(), readSponsorsManifest()]);
+  return (
+    <AdminDashboard
+      initialEditions={editions}
+      initialSponsors={sponsors}
+      blobConfigured={isBlobConfigured()}
+    />
+  );
 }

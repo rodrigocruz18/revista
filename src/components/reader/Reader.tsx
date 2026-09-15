@@ -4,20 +4,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Magazine } from "@/types/magazine";
+import type { Sponsor } from "@/types/sponsor";
 import { getPdfDocumentManager } from "@/lib/pdf";
 import { Flipbook, type FlipbookHandle } from "@/components/flipbook/Flipbook";
 import { ZoomedPageView } from "@/components/flipbook/ZoomedPageView";
 import { Toolbar } from "@/components/tools/Toolbar";
 import { Preloader } from "@/components/ui/Preloader";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { SponsorSlot } from "@/components/sponsors/SponsorSlot";
+import { FullPageSponsorAd } from "@/components/sponsors/FullPageSponsorAd";
 import { useMediaQuery, usePrefersReducedMotion } from "@/hooks/useMediaQuery";
 import { useKeyboardShortcuts } from "@/lib/keyboard";
 import { ZOOM_MAX, ZOOM_MIN, magazineConfig } from "@/config/magazine";
+import { FULLPAGE_TRIGGER_AFTER_TURNS } from "@/config/sponsors";
 import { clamp } from "@/lib/utils";
 import { loadEditionProgress, saveEditionProgress } from "@/lib/reader-storage";
 import { useAppLoading } from "@/components/intro/AppLoadingContext";
+import { useSponsorRotation } from "@/lib/sponsorRotation";
+import { hasSeenFullPageAd, markFullPageAdSeen } from "@/lib/sponsorFullPageStorage";
 
-export function Reader({ edition }: { edition: Magazine; allEditions: Magazine[] }) {
+export function Reader({
+  edition,
+  sponsors,
+}: {
+  edition: Magazine;
+  allEditions: Magazine[];
+  sponsors: Sponsor[];
+}) {
   const manager = useMemo(() => getPdfDocumentManager(edition.url), [edition.url]);
   const router = useRouter();
   const pathname = usePathname();
@@ -39,6 +52,53 @@ export function Reader({ edition }: { edition: Magazine; allEditions: Magazine[]
   const [toolbarVisible, setToolbarVisible] = useState(true);
 
   const baseScale = isMobile ? 1.6 : 2;
+
+  // ---- Sponsors: rotating banner + once-per-session full-page interstitial.
+  // A single rotation timer drives both the mobile (horizontal) and desktop
+  // (vertical) banner slots below, so they always agree on which sponsor is
+  // currently up instead of running on independent, possibly-drifting timers.
+  const currentBannerSponsor = useSponsorRotation(sponsors);
+
+  const [pageTurnCount, setPageTurnCount] = useState(0);
+  const [fullPageSponsor, setFullPageSponsor] = useState<Sponsor | null>(null);
+  const fullPageTriggeredRef = useRef(false);
+  const fullPageActiveRef = useRef(false);
+  useEffect(() => {
+    fullPageActiveRef.current = fullPageSponsor !== null;
+  }, [fullPageSponsor]);
+
+  // Only counts *real* flips (see the onPageChange wiring on <Flipbook> below)
+  // — never the initial page the reader opened on, and never the direct
+  // setCurrentPage() calls the wheel-zoom-entry handler makes further down.
+  const handleRealPageChange = useCallback((page: number) => {
+    setCurrentPage(page);
+    setPageTurnCount((count) => count + 1);
+  }, []);
+
+  useEffect(() => {
+    if (fullPageTriggeredRef.current) return;
+    if (pageTurnCount < FULLPAGE_TRIGGER_AFTER_TURNS) return;
+    if (hasSeenFullPageAd()) {
+      fullPageTriggeredRef.current = true;
+      return;
+    }
+    const eligible = sponsors.filter(
+      (s) => s.category === "fullpage" && s.status === "active" && s.fullPageImageUrl,
+    );
+    if (eligible.length === 0) return;
+    fullPageTriggeredRef.current = true;
+    const picked = eligible[Math.floor(Math.random() * eligible.length)];
+    markFullPageAdSeen();
+    // A legitimate effect: this is synchronizing with `pageTurnCount`
+    // crossing the trigger threshold (an external-ish signal driven by real
+    // page-flip events), not something derivable during render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFullPageSponsor(picked);
+  }, [pageTurnCount, sponsors]);
+
+  const dismissFullPageAd = useCallback(() => {
+    setFullPageSponsor(null);
+  }, []);
 
   // ---- Load document metadata + resolve the page we should open on. -----
   useEffect(() => {
@@ -155,6 +215,7 @@ export function Reader({ edition }: { edition: Magazine; allEditions: Magazine[]
     const el = containerRef.current;
     if (!el) return;
     function onWheel(e: WheelEvent) {
+      if (fullPageActiveRef.current) return;
       if (zoomRef.current > ZOOM_MIN) return;
       e.preventDefault();
       const next = zoomRef.current - e.deltaY * 0.0015;
@@ -179,12 +240,21 @@ export function Reader({ edition }: { edition: Magazine; allEditions: Magazine[]
   const goPrev = useCallback(() => flipbookRef.current?.prev(), []);
   const goNext = useCallback(() => flipbookRef.current?.next(), []);
 
+  // While the full-page sponsor interstitial is up it should block real
+  // navigation entirely (per the feature's design — see FullPageSponsorAd),
+  // so every shortcut except the one that dismisses it (Escape, reusing
+  // onCloseOverlay) becomes a no-op for as long as it's showing.
+  const noop = useCallback(() => {}, []);
   useKeyboardShortcuts({
-    onPrevPage: goPrev,
-    onNextPage: goNext,
-    onZoomIn: zoomIn,
-    onZoomOut: zoomOut,
+    onPrevPage: fullPageSponsor ? noop : goPrev,
+    onNextPage: fullPageSponsor ? noop : goNext,
+    onZoomIn: fullPageSponsor ? noop : zoomIn,
+    onZoomOut: fullPageSponsor ? noop : zoomOut,
     onCloseOverlay: () => {
+      if (fullPageSponsor) {
+        dismissFullPageAd();
+        return;
+      }
       if (zoom !== ZOOM_MIN) resetZoom();
     },
   });
@@ -219,44 +289,87 @@ export function Reader({ edition }: { edition: Magazine; allEditions: Magazine[]
             </Link>
           </div>
 
-          {/* min-h-0 is load-bearing here, not decorative: a flex child
-              defaults to min-height:auto, which means it refuses to shrink
-              below its content's intrinsic height. ZoomedPageView renders a
-              canvas taller than the viewport on purpose once zoomed in —
-              without min-h-0 this wrapper grows to match that canvas
-              instead of staying pinned to the column's actual available
-              space, so ZoomedPageView's own `h-full` resolves against an
+          {/* min-h-0 cascades down this whole row: a flex child defaults to
+              min-height:auto, which means it refuses to shrink below its
+              content's intrinsic height. ZoomedPageView renders a canvas
+              taller than the viewport on purpose once zoomed in — without
+              min-h-0 at every level here, that inner wrapper grows to match
+              that canvas instead of staying pinned to the available space,
+              so ZoomedPageView's own `h-full` resolves against an
               already-oversized parent and ends up with scrollHeight equal
               to clientHeight (nothing left to scroll). That's what made
               vertical panning silently do nothing while horizontal panning
               (unaffected, since width is fixed by the row layout, not
               content) kept working — not a scroll-math bug, a sizing one. */}
-          <div className="relative min-h-0 flex-1">
-            {zoom <= ZOOM_MIN ? (
-              <Flipbook
-                ref={flipbookRef}
-                manager={manager}
-                pageCount={numPages}
-                initialPage={currentPage}
-                baseWidth={baseSize.width}
-                baseHeight={baseSize.height}
-                renderScale={baseScale}
-                isMobile={isMobile}
-                reduceMotion={reduceMotion}
-                onPageChange={setCurrentPage}
-              />
-            ) : (
-              <ZoomedPageView
-                manager={manager}
-                pageNumber={currentPage}
-                totalPages={numPages}
-                zoom={zoom}
-                baseWidth={baseSize.width}
-                baseHeight={baseSize.height}
-                onZoomChange={setZoomClamped}
-                onReset={resetZoom}
-              />
-            )}
+          <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
+            {/* Desktop: vertical sponsor banner to the left of the magazine.
+                Reserving the column regardless of whether a sponsor is
+                currently showing (rest gap / initial delay) keeps the
+                flipbook's own width stable — nothing reflows when the
+                rotation swaps or goes quiet. */}
+            <div className="hidden shrink-0 items-center justify-center px-2 py-3 md:flex md:w-36 lg:w-44">
+              <div
+                className="relative h-full max-h-[78vh] w-full"
+                data-sponsor-variant="vertical"
+                style={{ aspectRatio: "600 / 1200" }}
+              >
+                <SponsorSlot
+                  key={currentBannerSponsor?.id ?? "empty-vertical"}
+                  sponsor={currentBannerSponsor}
+                  variant="vertical"
+                  reduceMotion={reduceMotion}
+                />
+              </div>
+            </div>
+
+            <div className="relative min-h-0 flex-1">
+              {zoom <= ZOOM_MIN ? (
+                <Flipbook
+                  ref={flipbookRef}
+                  manager={manager}
+                  pageCount={numPages}
+                  initialPage={currentPage}
+                  baseWidth={baseSize.width}
+                  baseHeight={baseSize.height}
+                  renderScale={baseScale}
+                  isMobile={isMobile}
+                  reduceMotion={reduceMotion}
+                  onPageChange={handleRealPageChange}
+                />
+              ) : (
+                <ZoomedPageView
+                  manager={manager}
+                  pageNumber={currentPage}
+                  totalPages={numPages}
+                  zoom={zoom}
+                  baseWidth={baseSize.width}
+                  baseHeight={baseSize.height}
+                  onZoomChange={setZoomClamped}
+                  onReset={resetZoom}
+                />
+              )}
+
+              {fullPageSponsor && (
+                <FullPageSponsorAd sponsor={fullPageSponsor} onDismiss={dismissFullPageAd} reduceMotion={reduceMotion} />
+              )}
+            </div>
+
+            {/* Mobile: horizontal sponsor strip right below the magazine.
+                Same reserved-space reasoning as the vertical column above. */}
+            <div className="flex shrink-0 items-center justify-center px-3 py-2 md:hidden">
+              <div
+                className="relative w-full max-w-md"
+                data-sponsor-variant="horizontal"
+                style={{ aspectRatio: "640 / 200" }}
+              >
+                <SponsorSlot
+                  key={currentBannerSponsor?.id ?? "empty-horizontal"}
+                  sponsor={currentBannerSponsor}
+                  variant="horizontal"
+                  reduceMotion={reduceMotion}
+                />
+              </div>
+            </div>
           </div>
 
           <Toolbar visible={toolbarVisible} currentPage={currentPage} totalPages={numPages} onPrev={goPrev} onNext={goNext} />
