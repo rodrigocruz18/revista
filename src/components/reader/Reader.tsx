@@ -74,16 +74,27 @@ export function Reader({
   const [spotsReady, setSpotsReady] = useState(false);
   const spotsInitializedRef = useRef(false);
 
-  // Whether the page currently on screen is a full-page sponsor slot rather
-  // than real content — fed by Flipbook's onFullPageActiveChange. Gates
-  // zoom entry (nothing real to zoom into on an ad) and keeps the toolbar
-  // pill from fading out while it's the only way to leave the ad.
-  const [onAdPage, setOnAdPage] = useState(false);
-  const onAdPageRef = useRef(false);
-  const handleFullPageActiveChange = useCallback((active: boolean) => {
-    onAdPageRef.current = active;
-    setOnAdPage(active);
+  // Whichever full-page sponsor is currently on screen (or null, on real
+  // content) — fed by Flipbook's onActiveAdChange, kept in sync continuously
+  // as the book flips, independent of the reader's cursor position. Used to:
+  // keep the toolbar pill from fading out while a sponsor is the only thing
+  // showing (it's the only way to leave it — see `controlsVisible` below),
+  // and to know what to zoom into when zoom is triggered without a cursor
+  // position to resolve it from (the keyboard +/- shortcuts — see zoomIn/
+  // zoomOut). Wheel-zoom instead resolves its target directly from the
+  // cursor via Flipbook's zoomTargetAtPoint, since that's also how it tells
+  // apart the two halves of a real two-page spread.
+  const [activeAdSponsor, setActiveAdSponsor] = useState<Sponsor | null>(null);
+  const activeAdSponsorRef = useRef<Sponsor | null>(null);
+  const handleActiveAdChange = useCallback((sponsor: Sponsor | null) => {
+    activeAdSponsorRef.current = sponsor;
+    setActiveAdSponsor(sponsor);
   }, []);
+
+  // Which sponsor (if any) the current zoom is showing — set at the moment
+  // zoom is entered (wheel or keyboard, see onWheel/zoomIn below) and simply
+  // ignored while zoom is back at ZOOM_MIN (Flipbook is what's shown then).
+  const [zoomSponsor, setZoomSponsor] = useState<Sponsor | null>(null);
 
   useEffect(() => {
     if (!numPages || spotsInitializedRef.current) return;
@@ -187,8 +198,19 @@ export function Reader({
     const clamped = clamp(next, ZOOM_MIN, ZOOM_MAX);
     setZoom(clamped <= ZOOM_MIN + 0.02 ? ZOOM_MIN : clamped);
   }, []);
-  const zoomIn = useCallback(() => setZoomClamped(zoom + 0.25), [zoom, setZoomClamped]);
-  const zoomOut = useCallback(() => setZoomClamped(zoom - 0.25), [zoom, setZoomClamped]);
+  // Keyboard zoom has no cursor position to resolve a target from (unlike
+  // the wheel handler below), so when it's what's crossing zoom in from
+  // ZOOM_MIN, it just takes whatever Flipbook currently reports as active
+  // (`activeAdSponsorRef` — null on real content) — same idea as the wheel
+  // path, just fed by continuous tracking instead of a point query.
+  const zoomIn = useCallback(() => {
+    if (zoom === ZOOM_MIN) setZoomSponsor(activeAdSponsorRef.current);
+    setZoomClamped(zoom + 0.25);
+  }, [zoom, setZoomClamped]);
+  const zoomOut = useCallback(() => {
+    if (zoom === ZOOM_MIN) setZoomSponsor(activeAdSponsorRef.current);
+    setZoomClamped(zoom - 0.25);
+  }, [zoom, setZoomClamped]);
   const resetZoom = useCallback(() => setZoom(ZOOM_MIN), []);
 
   // Desktop only: plain mouse-wheel scroll zooms in/out for reading — a
@@ -211,7 +233,6 @@ export function Reader({
     const el = containerRef.current;
     if (!el) return;
     function onWheel(e: WheelEvent) {
-      if (onAdPageRef.current) return;
       if (zoomRef.current > ZOOM_MIN) return;
       e.preventDefault();
       const next = zoomRef.current - e.deltaY * 0.0015;
@@ -220,11 +241,20 @@ export function Reader({
         // last reported, which for a two-page spread is always the LEFT
         // page — so scrolling to zoom while pointing at the right-hand page
         // used to open the zoom on the left one instead (reported bug).
-        // Resolve the actual page under the cursor from the book's own
-        // layout geometry and switch to it before the zoom view mounts, so
-        // it opens on whichever page was actually under the pointer.
-        const pointedPage = flipbookRef.current?.pageAtPoint(e.clientX, e.clientY);
-        if (pointedPage) setCurrentPage(pointedPage);
+        // Resolve whatever's actually under the cursor from the book's own
+        // layout geometry — a real page, or a full-page sponsor slot (which
+        // used to be skipped entirely here, so scrolling to zoom over an ad
+        // silently zoomed into whichever real page was last tracked instead
+        // — also reported, now fixed by handling it the same way) — and
+        // switch to it before the zoom view mounts, so it opens on whatever
+        // was actually under the pointer.
+        const target = flipbookRef.current?.zoomTargetAtPoint(e.clientX, e.clientY);
+        if (target?.kind === "real") {
+          setCurrentPage(target.page);
+          setZoomSponsor(null);
+        } else if (target?.kind === "ad") {
+          setZoomSponsor(target.sponsor);
+        }
       }
       setZoomClamped(next);
     }
@@ -250,8 +280,8 @@ export function Reader({
   useKeyboardShortcuts({
     onPrevPage: requestPrev,
     onNextPage: requestNext,
-    onZoomIn: onAdPage ? undefined : zoomIn,
-    onZoomOut: onAdPage ? undefined : zoomOut,
+    onZoomIn: zoomIn,
+    onZoomOut: zoomOut,
     onCloseOverlay: () => {
       if (zoom !== ZOOM_MIN) resetZoom();
     },
@@ -272,7 +302,7 @@ export function Reader({
   // inactivity auto-hide doesn't know that; left alone, staring at the ad
   // for a few seconds without moving the mouse would fade the only controls
   // that get past it.
-  const controlsVisible = onAdPage ? true : toolbarVisible;
+  const controlsVisible = activeAdSponsor ? true : toolbarVisible;
 
   return (
     <div ref={containerRef} className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#05070a]">
@@ -354,7 +384,7 @@ export function Reader({
                   reduceMotion={reduceMotion}
                   onPageChange={setCurrentPage}
                   onGutterChange={setGutter}
-                  onFullPageActiveChange={handleFullPageActiveChange}
+                  onActiveAdChange={handleActiveAdChange}
                   onRequestNext={requestNext}
                   onRequestPrev={requestPrev}
                 />
@@ -363,6 +393,7 @@ export function Reader({
                   manager={manager}
                   pageNumber={currentPage}
                   totalPages={numPages}
+                  sponsor={zoomSponsor}
                   zoom={zoom}
                   baseWidth={baseSize.width}
                   baseHeight={baseSize.height}

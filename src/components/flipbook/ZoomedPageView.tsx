@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PdfDocumentManager } from "@/lib/pdf";
+import type { Sponsor } from "@/types/sponsor";
 import { ZOOM_MAX, ZOOM_MIN } from "@/config/magazine";
 import { clamp } from "@/lib/utils";
 
@@ -9,6 +10,14 @@ export type ZoomedPageViewProps = {
   manager: PdfDocumentManager;
   pageNumber: number;
   totalPages: number;
+  /** Set when the reader zoomed into a full-page sponsor slot rather than a
+   * real PDF page — shows the sponsor's own image (cropped to the page's
+   * aspect ratio with `object-cover`, matching how it's cropped on the
+   * actual flipbook page) instead of rendering a PDF page, but shares every
+   * bit of the fit/zoom/pan/centering behavior below, so a sponsor slot
+   * zooms exactly like any other page. `pageNumber`/`totalPages` are simply
+   * ignored while this is set. */
+  sponsor?: Sponsor | null;
   zoom: number;
   /** PDF page size (any consistent unit — only the aspect ratio matters). */
   baseWidth: number;
@@ -57,6 +66,7 @@ export function ZoomedPageView({
   manager,
   pageNumber,
   totalPages,
+  sponsor,
   zoom,
   baseWidth,
   baseHeight,
@@ -128,13 +138,27 @@ export function ZoomedPageView({
   const padX = containerSize && displayWidth < containerSize.width ? (containerSize.width - displayWidth) / 2 : 0;
   const padY = containerSize && displayHeight < containerSize.height ? (containerSize.height - displayHeight) / 2 : 0;
 
+  // Set whenever the *target* just changed (a fresh page or sponsor), and
+  // consumed by the centering effect below the moment both the bitmap is
+  // ready AND the container has actually been measured — see that effect's
+  // own comment for why those two conditions can't be collapsed into one.
+  const pendingCenterRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
-    // Resets the "ready" flag for the newly-selected page before its
-    // higher-resolution render has loaded — a legitimate effect since it's
-    // synchronizing with the `pageNumber` prop, not derivable at render.
+    // Resets the "ready" flag for the newly-selected target before its
+    // content has loaded — a legitimate effect since it's synchronizing
+    // with the `pageNumber`/`sponsor` props, not derivable at render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setReady(false);
+    pendingCenterRef.current = true;
+    if (sponsor) {
+      // Nothing to render ourselves — the sponsor's own <img> below loads
+      // itself — just flag ready so it fades in and centers exactly like a
+      // freshly-rendered PDF page.
+      setReady(true);
+      return;
+    }
     manager.renderPage(pageNumber, RENDER_SCALE).then((result) => {
       if (cancelled) return;
       const canvas = canvasRef.current;
@@ -143,17 +167,40 @@ export function ZoomedPageView({
       canvas.height = result.height;
       canvas.getContext("2d")?.drawImage(result.canvas, 0, 0);
       setReady(true);
-      requestAnimationFrame(() => {
-        const scroller = scrollRef.current;
-        if (!scroller) return;
-        scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) / 2;
-        scroller.scrollTop = 0;
-      });
     });
     return () => {
       cancelled = true;
     };
-  }, [manager, pageNumber]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manager, pageNumber, sponsor?.id]);
+
+  // Centers a freshly-opened target once BOTH its content is ready AND the
+  // container has actually been measured. Those two can arrive in either
+  // order: `fitSize` depends on `containerSize`, which is only known once
+  // the ResizeObserver above has fired at least once, and that can lag
+  // behind `ready` flipping true (e.g. an already-cached PDF render, or the
+  // sponsor branch above, which flips it on the very next tick). Centering
+  // only when `ready` first turns true — as this used to, entirely inside
+  // the render's own `.then()` — raced that measurement: if the container
+  // size actually arrived *after*, the canvas kept its native, CSS-unsized
+  // dimensions (`displayWidth`/`displayHeight` are 0 until `fitSize`
+  // exists) at the moment the old code centered it, and the scroll offset
+  // it computed then went stale the instant `fitSize` showed up and the
+  // canvas snapped down to its real on-screen size — the browser just
+  // clamps that now-too-large `scrollLeft` down to whatever the new,
+  // smaller `scrollWidth` allows, which is its rightmost valid position,
+  // not the center. That's what read as "the zoomed page opens skewed to
+  // the right." Re-running this whenever `fitSize` changes too (not only
+  // on a fresh target) — guarded by `pendingCenterRef` so it fires exactly
+  // once per target — catches the case where the measurement lands late.
+  useLayoutEffect(() => {
+    if (!pendingCenterRef.current || !ready || !fitSize) return;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    pendingCenterRef.current = false;
+    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) / 2;
+    scroller.scrollTop = 0;
+  }, [ready, fitSize]);
 
   // Runs whenever `zoom` actually changes. If that change came from a wheel
   // tick (see handleWheel), re-anchor the scroll position so the point that
@@ -247,18 +294,35 @@ export function ZoomedPageView({
       className="relative h-full w-full cursor-grab overflow-auto overscroll-contain bg-[#05070a] active:cursor-grabbing"
     >
       <div style={{ padding: `${padY}px ${padX}px` }}>
-        <canvas
-          ref={canvasRef}
-          className="block bg-[#f6f3ea] shadow-2xl transition-opacity"
-          style={{
-            width: displayWidth || undefined,
-            height: displayHeight || undefined,
-            opacity: ready ? 1 : 0,
-          }}
-        />
+        {sponsor ? (
+          sponsor.fullPageImageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={sponsor.fullPageImageUrl}
+              alt={sponsor.name}
+              draggable={false}
+              className="block bg-[#f6f3ea] object-cover shadow-2xl transition-opacity"
+              style={{
+                width: displayWidth || undefined,
+                height: displayHeight || undefined,
+                opacity: ready ? 1 : 0,
+              }}
+            />
+          )
+        ) : (
+          <canvas
+            ref={canvasRef}
+            className="block bg-[#f6f3ea] shadow-2xl transition-opacity"
+            style={{
+              width: displayWidth || undefined,
+              height: displayHeight || undefined,
+              opacity: ready ? 1 : 0,
+            }}
+          />
+        )}
       </div>
       <span className="pointer-events-none fixed bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white/80">
-        {pageNumber} / {totalPages} · doble clic para restablecer
+        {sponsor ? "Publicidad" : `${pageNumber} / ${totalPages}`} · doble clic para restablecer
       </span>
     </div>
   );

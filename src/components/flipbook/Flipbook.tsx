@@ -11,28 +11,36 @@ import {
 } from "react";
 import HTMLFlipBook from "react-pageflip";
 import type { PdfDocumentManager } from "@/lib/pdf";
+import type { Sponsor } from "@/types/sponsor";
 import { FlipbookPage } from "@/components/flipbook/FlipbookPage";
 import { FlipbookAdPage } from "@/components/flipbook/FlipbookAdPage";
 import { FlipbookFillerPage } from "@/components/flipbook/FlipbookFillerPage";
 import type { FullPageSpot } from "@/lib/fullPageSpots";
 import { clamp } from "@/lib/utils";
 
+/** Whatever is visually under a given viewport point, resolved by
+ * `zoomTargetAtPoint` below — either a real PDF page, or a full-page
+ * sponsor slot (ad or its blank filler companion; both resolve to the same
+ * sponsor, since visually they're one spread). Lets a parent zoom into
+ * whichever one the reader actually pointed at, sponsor pages included,
+ * instead of only ever supporting real pages. */
+export type ZoomTarget = { kind: "real"; page: number } | { kind: "ad"; sponsor: Sponsor };
+
 export type FlipbookHandle = {
   goToPage: (pageNumber: number) => void;
   next: () => void;
   prev: () => void;
   /**
-   * Which real page is visually under a given viewport point right now —
-   * the left or right half of a two-page spread resolve to different page
-   * numbers. Used when the user starts zooming with the mouse wheel, so the
-   * zoom opens on whichever page they were actually pointing at instead of
-   * always the spread's nominal "current" page (react-pageflip's onFlip only
-   * ever reports the left page of a spread, which is what made zooming
+   * What is visually under a given viewport point right now — the left or
+   * right half of a two-page spread resolve to different targets. Used when
+   * the user starts zooming with the mouse wheel, so the zoom opens on
+   * whichever page (real or sponsor) they were actually pointing at instead
+   * of always the spread's nominal "current" page (react-pageflip's onFlip
+   * only ever reports the left page of a spread, which is what made zooming
    * while pointing at the right-hand page visibly jump to the left one).
-   * Returns null if the point isn't over the book at all, or is over a
-   * full-page sponsor slot (nothing real to zoom into there).
+   * Returns null if the point isn't over the book at all.
    */
-  pageAtPoint: (clientX: number, clientY: number) => number | null;
+  zoomTargetAtPoint: (clientX: number, clientY: number) => ZoomTarget | null;
 };
 
 /** The empty space around the visible page(s), in the same coordinate space
@@ -70,17 +78,18 @@ export type FlipbookProps = {
   isMobile: boolean;
   reduceMotion: boolean;
   /** Real page number — never called while sitting on a full-page sponsor
-   * slot (see `onFullPageActiveChange` for that). */
+   * slot (see `onActiveAdChange` for that). */
   onPageChange: (pageNumber: number) => void;
   /** Fires whenever the book's own layout is (re)computed — null while it
    * isn't ready yet (still measuring, or the container has no size). */
   onGutterChange?: (gutter: FlipbookGutter | null) => void;
   /** Fires whenever the currently-shown page becomes (or stops being) a
-   * full-page sponsor slot — a real PDF page isn't being displayed right
-   * then, so a parent should suspend anything that assumes one is (zoom
-   * entry, in particular: it would otherwise zoom into whatever real page
-   * was last tracked, not the sponsor page actually on screen). */
-  onFullPageActiveChange?: (active: boolean) => void;
+   * full-page sponsor slot, naming which sponsor (or null, back on real
+   * content) — a parent uses this to keep its own idea of "what's on
+   * screen" in sync even when nothing calls `zoomTargetAtPoint` (e.g.
+   * zooming via a keyboard shortcut, which has no cursor position to
+   * resolve a target from). */
+  onActiveAdChange?: (sponsor: Sponsor | null) => void;
   /**
    * When provided, tap/click-to-turn (the only way this component ever
    * turns a page — see the note on disableFlipByClick below) calls these
@@ -150,7 +159,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
     reduceMotion,
     onPageChange,
     onGutterChange,
-    onFullPageActiveChange,
+    onActiveAdChange,
     onRequestNext,
     onRequestPrev,
   },
@@ -170,7 +179,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
   // `activePage` is a 1-based position in `sequence` (a "book position"),
   // NOT a real PDF page number — the two only coincide when there are no
   // sponsor spots before the current position. Every external boundary
-  // (the `initialPage` prop, `onPageChange`, `goToPage`, `pageAtPoint`)
+  // (the `initialPage` prop, `onPageChange`, `goToPage`, `zoomTargetAtPoint`)
   // converts between the two right at the edge; everything else in this
   // component (isEdgePage, spreadLeftPage, centering, render-window,
   // tap-zone geometry) operates purely on book positions and doesn't care
@@ -272,7 +281,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
   // directly from outside (goToPage(), or this component's own `initialPage`
   // prop on mount) with either parity, e.g. Reader hands back a page it
   // resolved by pointing at the *right*-hand page of a spread while zooming.
-  // Every bit of layout math below (spread width, click zones, pageAtPoint)
+  // Every bit of layout math below (spread width, click zones, zoomTargetAtPoint)
   // assumes a left-page anchor, so normalize to it here rather than trusting
   // `activePage`'s parity — otherwise landing on an odd "activePage" made
   // this component believe it was the left page of a spread with the next
@@ -323,13 +332,13 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
   }, [onGutterChange, bookSize, containerSize, zoneLeft, zoneTop, visibleWidth, visibleHeight]);
 
   // Tells a parent whenever the currently-shown page is a full-page
-  // sponsor slot rather than real content — see the prop's own doc
-  // comment for why that matters (mainly: suspending zoom entry).
+  // sponsor slot rather than real content, and which sponsor — see the
+  // prop's own doc comment for why that matters.
   useEffect(() => {
-    if (!onFullPageActiveChange) return;
+    if (!onActiveAdChange) return;
     const entry = sequence[activePage - 1];
-    onFullPageActiveChange(entry ? entry.kind !== "real" : false);
-  }, [onFullPageActiveChange, sequence, activePage]);
+    onActiveAdChange(entry && entry.kind !== "real" ? entry.spot.sponsor : null);
+  }, [onActiveAdChange, sequence, activePage]);
 
   useImperativeHandle(
     ref,
@@ -346,7 +355,7 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
       },
       next: () => getController()?.flipNext(),
       prev: () => getController()?.flipPrev(),
-      pageAtPoint: (clientX: number, clientY: number) => {
+      zoomTargetAtPoint: (clientX: number, clientY: number) => {
         const rect = measureRef.current?.getBoundingClientRect();
         if (!rect || !bookSize) return null;
         const x = clientX - rect.left;
@@ -364,7 +373,12 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
           bookPos = clamp(isRightHalf ? spreadLeftPage + 1 : spreadLeftPage, 1, sequence.length);
         }
         const entry = sequence[bookPos - 1];
-        return entry?.kind === "real" ? entry.page : null;
+        if (!entry) return null;
+        if (entry.kind === "real") return { kind: "real", page: entry.page };
+        // "ad" and "filler" (the blank back of a spread, desktop-only) both
+        // resolve to the same sponsor — visually they're one placement, so
+        // pointing at either half zooms into the sponsor's own page.
+        return { kind: "ad", sponsor: entry.spot.sponsor };
       },
     }),
     [
