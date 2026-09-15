@@ -24,10 +24,20 @@ export type ToolbarProps = {
 };
 
 export function Toolbar({ visible, currentPage, totalPages, onPrev, onNext, variant = "floating" }: ToolbarProps) {
+  // A brighter border + a soft outward glow (on top of the original drop
+  // shadow) instead of the original border-white/10 — the floating variant
+  // normally sits over a light PDF page, where even a faint dark pill reads
+  // fine, but it also has to stay legible over the full-page sponsor's dark
+  // filler "page" (see FullPageSponsorAd), whose near-black tone is close
+  // enough to this pill's own that a subtle border used to disappear into
+  // it almost completely. The glow keeps it readable against either.
+  const pillClass =
+    "rounded-2xl border border-white/25 bg-[#0d0f0c]/95 shadow-[0_0_0_1px_rgba(0,0,0,0.4),0_0_24px_2px_rgba(255,255,255,0.07),0_20px_60px_-15px_rgba(0,0,0,0.85)]";
+
   if (variant === "inline") {
     return (
       <div className="flex shrink-0 justify-center py-2">
-        <div className="rounded-2xl border border-white/10 bg-[#0d0f0c]/90 px-4 py-2 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.7)]">
+        <div className={cn(pillClass, "px-4 py-2")}>
           <FlipbookControls currentPage={currentPage} totalPages={totalPages} onPrev={onPrev} onNext={onNext} />
         </div>
       </div>
@@ -37,11 +47,16 @@ export function Toolbar({ visible, currentPage, totalPages, onPrev, onNext, vari
   return (
     <div
       className={cn(
-        "pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 pb-3 transition-all duration-300",
+        // z-50: above the full-page sponsor interstitial's own z-40 (see
+        // FullPageSponsorAd) — without this the pill was being painted
+        // *behind* that overlay's opaque fake "page" wherever the two
+        // happened to overlap, effectively hiding it completely rather
+        // than just blending into it.
+        "pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-3 pb-3 transition-all duration-300",
         visible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
       )}
     >
-      <div className="pointer-events-auto rounded-2xl border border-white/10 bg-[#0d0f0c]/90 px-4 py-2.5 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.8)] backdrop-blur-md">
+      <div className={cn(pillClass, "pointer-events-auto px-4 py-2.5 backdrop-blur-md")}>
         <FlipbookControls currentPage={currentPage} totalPages={totalPages} onPrev={onPrev} onNext={onNext} />
       </div>
     </div>

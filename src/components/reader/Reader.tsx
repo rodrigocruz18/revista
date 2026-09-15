@@ -470,10 +470,16 @@ export function Reader({
 
           {/* Desktop only: the floating auto-hiding pill (see Toolbar's
               "floating" vs "inline" doc comment) — mobile gets its own
-              in-flow copy above, between the book and the sponsor strip. */}
+              in-flow copy above, between the book and the sponsor strip.
+              Forced visible whenever the full-page interstitial is up: the
+              reader's only way to leave it is a prev/next turn, and the
+              inactivity auto-hide (see the "show"/timeout effect above)
+              doesn't know that — left alone, staring at the ad for a few
+              seconds without moving the mouse would fade the only controls
+              that get them out of it. */}
           <div className="hidden md:block">
             <Toolbar
-              visible={toolbarVisible}
+              visible={fullPageSponsor ? true : toolbarVisible}
               currentPage={currentPage}
               totalPages={numPages}
               onPrev={requestPrev}
