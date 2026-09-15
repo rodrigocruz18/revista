@@ -9,9 +9,31 @@ export type ToolbarProps = {
   totalPages: number;
   onPrev: () => void;
   onNext: () => void;
+  /** "floating" (default): the original fixed-to-viewport pill that fades
+   * out on inactivity — works well on desktop, where it floats over empty
+   * margin either side of the book. "inline" renders the same pill as a
+   * normal, static block instead — no fixed positioning, always shown
+   * (the `visible` auto-hide fade doesn't apply). Mobile uses this: with
+   * the book and the horizontal sponsor strip already stacked tightly
+   * below each other, a fixed-bottom pill has nowhere to float without
+   * landing on top of one of them, and toggling it in/out of a normal
+   * flow position would shove the sponsor strip up and down every time it
+   * auto-hides. Placed in the document flow between the book and the
+   * sponsor strip instead, it just claims its own fixed spot once. */
+  variant?: "floating" | "inline";
 };
 
-export function Toolbar({ visible, currentPage, totalPages, onPrev, onNext }: ToolbarProps) {
+export function Toolbar({ visible, currentPage, totalPages, onPrev, onNext, variant = "floating" }: ToolbarProps) {
+  if (variant === "inline") {
+    return (
+      <div className="flex shrink-0 justify-center py-2">
+        <div className="rounded-2xl border border-white/10 bg-[#0d0f0c]/90 px-4 py-2 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.7)]">
+          <FlipbookControls currentPage={currentPage} totalPages={totalPages} onPrev={onPrev} onNext={onNext} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(

@@ -31,6 +31,24 @@ export type FlipbookHandle = {
   pageAtPoint: (clientX: number, clientY: number) => number | null;
 };
 
+/** The empty space around the visible page(s), in the same coordinate space
+ * as Flipbook's own root container (i.e. relative to that container's own
+ * top-left corner) — the exact geometry Flipbook already computes for its
+ * own left/right tap-to-turn hint arrows. Exposed so a parent can overlay
+ * something (e.g. a sponsor banner) precisely centered in that dead space
+ * instead of guessing a fixed width that never quite matches the book's
+ * actual rendered size at the current viewport/aspect ratio. */
+export type FlipbookGutter = {
+  left: number;
+  top: number;
+  visibleWidth: number;
+  visibleHeight: number;
+  /** Whether two pages are currently shown side by side (landscape, not the
+   * lone cover/back page) — used by the full-page sponsor interstitial to
+   * decide whether to fake a two-page spread or a single page. */
+  isSpread: boolean;
+};
+
 export type FlipbookProps = {
   manager: PdfDocumentManager;
   pageCount: number;
@@ -41,6 +59,23 @@ export type FlipbookProps = {
   isMobile: boolean;
   reduceMotion: boolean;
   onPageChange: (pageNumber: number) => void;
+  /** Fires whenever the book's own layout is (re)computed — null while it
+   * isn't ready yet (still measuring, or the container has no size). */
+  onGutterChange?: (gutter: FlipbookGutter | null) => void;
+  /**
+   * When provided, tap/click-to-turn (the only way this component ever
+   * turns a page — see the note on disableFlipByClick below) calls these
+   * instead of driving the page-flip controller directly. This lets a
+   * parent centralize *every* forward/backward request — tap, keyboard,
+   * toolbar button all end up here — behind one gate, which is what makes
+   * the full-page sponsor interstitial possible: it needs to intercept a
+   * "go forward" request regardless of which input triggered it, show
+   * itself instead of the real flip, and only let the *next* such request
+   * through to the book. Falls back to calling the controller directly if
+   * not provided, so this component still works standalone.
+   */
+  onRequestNext?: () => void;
+  onRequestPrev?: () => void;
 };
 
 type FlipEvent = { data: number };
@@ -57,7 +92,20 @@ type PageFlipController = {
 const RENDER_WINDOW = 2;
 
 export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipbook(
-  { manager, pageCount, initialPage, baseWidth, baseHeight, renderScale, isMobile, reduceMotion, onPageChange },
+  {
+    manager,
+    pageCount,
+    initialPage,
+    baseWidth,
+    baseHeight,
+    renderScale,
+    isMobile,
+    reduceMotion,
+    onPageChange,
+    onGutterChange,
+    onRequestNext,
+    onRequestPrev,
+  },
   ref,
 ) {
   // react-pageflip's own ref type is effectively `any`; we keep it isolated here.
@@ -197,6 +245,20 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
   const zoneTop = containerSize && bookSize ? (containerSize.height - visibleHeight) / 2 : 0;
   const zoneLeft = containerSize && bookSize ? (containerSize.width - visibleWidth) / 2 : 0;
 
+  // Reports the same left/top/visible-size geometry used for the nav-hint
+  // arrows below, so a parent (Reader) can position something else — the
+  // sponsor banner — precisely within the real dead space around the book,
+  // which shifts with viewport size, page aspect ratio, and orientation.
+  useEffect(() => {
+    if (!onGutterChange) return;
+    if (!bookSize || !containerSize) {
+      onGutterChange(null);
+      return;
+    }
+    const isSpread = orientation === "landscape" && !isEdgePage;
+    onGutterChange({ left: zoneLeft, top: zoneTop, visibleWidth, visibleHeight, isSpread });
+  }, [onGutterChange, bookSize, containerSize, zoneLeft, zoneTop, visibleWidth, visibleHeight, orientation, isEdgePage]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -281,12 +343,26 @@ export const Flipbook = forwardRef<FlipbookHandle, FlipbookProps>(function Flipb
       const y = e.clientY - rect.top;
       if (y < zoneTop || y > zoneTop + visibleHeight) return;
       if (x >= zoneLeft && x <= zoneLeft + edgeZoneWidth) {
-        getController()?.flipPrev();
+        if (onRequestPrev) onRequestPrev();
+        else getController()?.flipPrev();
       } else if (x <= zoneLeft + visibleWidth && x >= zoneLeft + visibleWidth - edgeZoneWidth) {
-        getController()?.flipNext();
+        if (onRequestNext) onRequestNext();
+        else getController()?.flipNext();
       }
     },
-    [isPinchZoomed, bookSize, containerSize, zoneTop, visibleHeight, zoneLeft, edgeZoneWidth, visibleWidth, getController],
+    [
+      isPinchZoomed,
+      bookSize,
+      containerSize,
+      zoneTop,
+      visibleHeight,
+      zoneLeft,
+      edgeZoneWidth,
+      visibleWidth,
+      getController,
+      onRequestPrev,
+      onRequestNext,
+    ],
   );
 
   return (

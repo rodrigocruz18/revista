@@ -542,39 +542,47 @@ body {
 }
 
 /* ---- FullPageSponsorAd: the "pagina completa" interstitial ----
-   The backdrop fades in while the framed image arrives with a touch of
-   scale/lift, echoing a page settling into place — deliberately calmer than
-   LogoIntro's reveal since this interrupts active reading. */
-.fullpage-ad {
-  animation: fullpageAdBackdrop 320ms ease-out both;
-}
-.fullpage-ad .fullpage-ad-frame {
-  animation: fullpageAdFrame 420ms cubic-bezier(0.22, 0.61, 0.36, 1) 60ms both;
+   Each fake page swings into view around its own spine edge (the ad page's
+   right edge / the filler page's left edge — see FullPageSponsorAd.tsx's
+   transformOrigin, or the single fake page's left edge when only one page
+   is shown), like a real page settling after a turn — not a modal
+   fading/scaling in from nowhere, which is what read as an interruption
+   rather than "another page of the magazine" per the original feedback.
+   `perspective` lives on the parent (set inline in the component, since it
+   depends on nothing here) so both halves of a spread tilt in one shared
+   3D space instead of each getting their own flat, independent skew. */
+.fullpage-flip {
+  animation: fullpageFlipIn 480ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
 
-@keyframes fullpageAdBackdrop {
+/* Opacity deliberately stays at 1 throughout (unlike a typical fade-in
+   entrance): these fake pages sit directly on top of the real, already-
+   rendered book underneath, so animating opacity here would let the real
+   page bleed through mid-swing — a double-exposure "ghosting" glitch that
+   breaks the illusion instead of selling it. A real paper page doesn't
+   turn translucent as it turns, either; only rotation + a brightness dip
+   (catching less light edge-on) sell the motion. */
+@keyframes fullpageFlipIn {
+  from {
+    transform: rotateY(62deg);
+    filter: brightness(0.55);
+  }
+  to {
+    transform: rotateY(0deg);
+    filter: brightness(1);
+  }
+}
+
+/* Reduced motion: the 3D swing becomes a plain fade, same structural
+   pattern as .intro-overlay--reduced above. */
+.fullpage-flip--reduced {
+  animation: fullpageFlipInReduced 200ms ease-out both;
+}
+@keyframes fullpageFlipInReduced {
   from {
     opacity: 0;
   }
   to {
     opacity: 1;
   }
-}
-
-@keyframes fullpageAdFrame {
-  from {
-    opacity: 0;
-    transform: translateY(16px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.fullpage-ad--reduced {
-  animation: fullpageAdBackdrop 150ms ease-out both;
-}
-.fullpage-ad--reduced .fullpage-ad-frame {
-  animation: none;
 }
