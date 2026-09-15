@@ -9,30 +9,43 @@ export type ToolbarProps = {
   totalPages: number;
   onPrev: () => void;
   onNext: () => void;
-  /** "floating" (default): the original fixed-to-viewport pill that fades
-   * out on inactivity — works well on desktop, where it floats over empty
-   * margin either side of the book. "inline" renders the same pill as a
-   * normal, static block instead — no fixed positioning, always shown
-   * (the `visible` auto-hide fade doesn't apply). Mobile uses this: with
-   * the book and the horizontal sponsor strip already stacked tightly
-   * below each other, a fixed-bottom pill has nowhere to float without
-   * landing on top of one of them, and toggling it in/out of a normal
-   * flow position would shove the sponsor strip up and down every time it
-   * auto-hides. Placed in the document flow between the book and the
-   * sponsor strip instead, it just claims its own fixed spot once. */
+  /** "floating" (default): the fixed-to-viewport pill that fades out on
+   * inactivity. "inline" renders the same pill as a normal, static block
+   * instead — no fixed positioning, always shown (the `visible` auto-hide
+   * fade doesn't apply). Currently unused (mobile also floats, see Reader),
+   * kept available for a layout where the book and a banner are stacked too
+   * tightly for a floating pill to land without covering one of them. */
   variant?: "floating" | "inline";
+  /** Floating variant only: a lower-opacity pill for contexts where it sits
+   * directly on top of the page content itself rather than in its own
+   * reserved margin — mobile's full-screen PDF, in particular, per the
+   * explicit request to keep the control light-touch there. Still keeps
+   * its border + glow (see `pillClass` below) so it stays legible over the
+   * full-page sponsor's dark filler page even at lower opacity. */
+  translucent?: boolean;
 };
 
-export function Toolbar({ visible, currentPage, totalPages, onPrev, onNext, variant = "floating" }: ToolbarProps) {
+export function Toolbar({
+  visible,
+  currentPage,
+  totalPages,
+  onPrev,
+  onNext,
+  variant = "floating",
+  translucent = false,
+}: ToolbarProps) {
   // A brighter border + a soft outward glow (on top of the original drop
-  // shadow) instead of the original border-white/10 — the floating variant
-  // normally sits over a light PDF page, where even a faint dark pill reads
-  // fine, but it also has to stay legible over the full-page sponsor's dark
-  // filler "page" (see FullPageSponsorAd), whose near-black tone is close
-  // enough to this pill's own that a subtle border used to disappear into
-  // it almost completely. The glow keeps it readable against either.
-  const pillClass =
-    "rounded-2xl border border-white/25 bg-[#0d0f0c]/95 shadow-[0_0_0_1px_rgba(0,0,0,0.4),0_0_24px_2px_rgba(255,255,255,0.07),0_20px_60px_-15px_rgba(0,0,0,0.85)]";
+  // shadow) instead of a plain border-white/10 — the floating variant sits
+  // over a light PDF page most of the time, where even a faint dark pill
+  // reads fine, but it also has to stay legible over the full-page
+  // sponsor's dark filler "page" (see FullPageSponsorAd), whose near-black
+  // tone is close enough to this pill's own that a subtle border used to
+  // disappear into it almost completely — the glow keeps it readable
+  // against either, even at the lower `translucent` opacity.
+  const pillClass = cn(
+    "rounded-2xl border shadow-[0_0_0_1px_rgba(0,0,0,0.4),0_0_24px_2px_rgba(255,255,255,0.07),0_20px_60px_-15px_rgba(0,0,0,0.85)]",
+    translucent ? "border-white/15 bg-[#0d0f0c]/55" : "border-white/25 bg-[#0d0f0c]/95",
+  );
 
   if (variant === "inline") {
     return (

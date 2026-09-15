@@ -16,7 +16,7 @@ import { FullPageSponsorAd, type PageBox } from "@/components/sponsors/FullPageS
 import { useMediaQuery, usePrefersReducedMotion } from "@/hooks/useMediaQuery";
 import { useKeyboardShortcuts } from "@/lib/keyboard";
 import { ZOOM_MAX, ZOOM_MIN, magazineConfig } from "@/config/magazine";
-import { clamp } from "@/lib/utils";
+import { clamp, cn } from "@/lib/utils";
 import { loadEditionProgress, saveEditionProgress } from "@/lib/reader-storage";
 import { useAppLoading } from "@/components/intro/AppLoadingContext";
 import { useSponsorRotation } from "@/lib/sponsorRotation";
@@ -95,6 +95,43 @@ export function Reader({
   // handleRealPageChange (which sees the flip's real result).
   const learningSpotRef = useRef<FullPageSpot | null>(null);
 
+  // Non-null while the active spot is playing its exit swing (see
+  // FullPageSponsorAd's `exitDirection` prop) — set the instant a
+  // prev/next is requested while a spot is showing, whichever way that
+  // request points, whether it continues past the spot or cancels back out
+  // of it. `activeSpot` itself stays populated for the whole exit so the
+  // interstitial keeps rendering (now with the "-out" animation class)
+  // instead of vanishing the instant the request comes in; only once the
+  // swing finishes (see `beginSpotExit`'s timeout below) does it clear both
+  // and perform whatever real flip (if any) was deferred.
+  const [exitDirection, setExitDirection] = useState<"forward" | "backward" | null>(null);
+  const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const EXIT_ANIM_MS = reduceMotion ? 1 : 260;
+
+  const clearSpotExitTimeout = useCallback(() => {
+    if (exitTimeoutRef.current) {
+      clearTimeout(exitTimeoutRef.current);
+      exitTimeoutRef.current = null;
+    }
+  }, []);
+  useEffect(() => clearSpotExitTimeout, [clearSpotExitTimeout]);
+
+  const beginSpotExit = useCallback(
+    (direction: "forward" | "backward", afterFlip: "next" | "prev" | null, learn?: FullPageSpot) => {
+      if (learn) learningSpotRef.current = learn;
+      clearSpotExitTimeout();
+      setExitDirection(direction);
+      exitTimeoutRef.current = setTimeout(() => {
+        exitTimeoutRef.current = null;
+        setActiveSpot(null);
+        setExitDirection(null);
+        if (afterFlip === "next") flipbookRef.current?.next();
+        else if (afterFlip === "prev") flipbookRef.current?.prev();
+      }, EXIT_ANIM_MS);
+    },
+    [clearSpotExitTimeout, EXIT_ANIM_MS],
+  );
+
   useEffect(() => {
     if (!numPages || spotsInitializedRef.current) return;
     spotsInitializedRef.current = true;
@@ -132,6 +169,8 @@ export function Reader({
     spotsInitializedRef.current = false;
     setSpots([]);
     setActiveSpot(null);
+    clearSpotExitTimeout();
+    setExitDirection(null);
 
     // Tells the splash's loading phase (see LogoIntro/IntroGate) there's
     // real work to wait for — on the very first load of a browser session
@@ -187,13 +226,19 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, edition.slug]);
 
-  // ---- Toolbar auto-hide on inactivity. ----
+  // ---- Toolbar + mobile header auto-hide on inactivity. Both float
+  // directly on top of the PDF on mobile (see the header/Toolbar markup
+  // below), which is what lets the book render truly full-screen there —
+  // so on mobile this fades faster than on desktop, where the header is a
+  // normal opaque bar that doesn't cover any content and only the toolbar
+  // itself needs to get out of the way. ----
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
+    const hideDelay = isMobile ? 1400 : 3200;
     function show() {
       setToolbarVisible(true);
       clearTimeout(timeout);
-      timeout = setTimeout(() => setToolbarVisible(false), 3200);
+      timeout = setTimeout(() => setToolbarVisible(false), hideDelay);
     }
     const el = containerRef.current;
     el?.addEventListener("pointermove", show);
@@ -206,7 +251,7 @@ export function Reader({
       el?.removeEventListener("pointerdown", show);
       el?.removeEventListener("touchstart", show);
     };
-  }, []);
+  }, [isMobile]);
 
   // ---- Zoom ----
   const setZoomClamped = useCallback((next: number) => {
@@ -275,19 +320,21 @@ export function Reader({
   // near, however long ago they last crossed it.
   const requestNext = useCallback(() => {
     if (activeSpot) {
+      // Already mid-exit (a tap landed while the swing from a previous
+      // request was still playing) — ignore it rather than restart or
+      // overlap the animation.
+      if (exitDirection) return;
       if (activeSpot.arrivedFrom === "forward") {
-        // Continue through it: perform the real flip that was deferred
-        // when the spot first appeared, landing on the true next page —
-        // handleRealPageChange will record the exact result as this
-        // spot's firstPageAfter.
-        learningSpotRef.current = activeSpot.spot;
-        setActiveSpot(null);
-        flipbookRef.current?.next();
+        // Continue through it: play the exit swing toward "forward", then
+        // perform the real flip that was deferred when the spot first
+        // appeared, landing on the true next page — handleRealPageChange
+        // will record the exact result as this spot's firstPageAfter.
+        beginSpotExit("forward", "next", activeSpot.spot);
       } else {
         // Arrived going backward: a forward turn from here cancels back
         // out to the real page already showing (the one just after the
-        // spot) — no real flip.
-        setActiveSpot(null);
+        // spot) — same "forward" exit swing, but no real flip follows.
+        beginSpotExit("forward", null);
       }
       return;
     }
@@ -297,20 +344,21 @@ export function Reader({
       return;
     }
     flipbookRef.current?.next();
-  }, [activeSpot, spots, currentPage]);
+  }, [activeSpot, exitDirection, spots, currentPage, beginSpotExit]);
 
   const requestPrev = useCallback(() => {
     if (activeSpot) {
+      if (exitDirection) return;
       if (activeSpot.arrivedFrom === "backward") {
-        // Continue through it going backward: perform the deferred real
-        // flip, landing back on the real page just before the spot.
-        setActiveSpot(null);
-        flipbookRef.current?.prev();
+        // Continue through it going backward: play the exit swing toward
+        // "backward", then perform the deferred real flip, landing back on
+        // the real page just before the spot.
+        beginSpotExit("backward", "prev");
       } else {
         // Arrived going forward: a backward turn from here cancels back
         // out to the real page already showing (the one just before the
-        // spot) — no real flip.
-        setActiveSpot(null);
+        // spot) — same "backward" exit swing, but no real flip follows.
+        beginSpotExit("backward", null);
       }
       return;
     }
@@ -320,7 +368,7 @@ export function Reader({
       return;
     }
     flipbookRef.current?.prev();
-  }, [activeSpot, spots, currentPage]);
+  }, [activeSpot, exitDirection, spots, currentPage, beginSpotExit]);
 
   const noop = useCallback(() => {}, []);
   useKeyboardShortcuts({
@@ -330,9 +378,10 @@ export function Reader({
     onZoomOut: activeSpot ? noop : zoomOut,
     onCloseOverlay: () => {
       if (activeSpot) {
-        // Escape always just cancels, whichever direction the reader
-        // arrived from — never performs a real flip.
-        setActiveSpot(null);
+        // Escape always just cancels, never performs a real flip — exiting
+        // back the same way the reader arrived, like closing the same door
+        // that opened.
+        if (!exitDirection) beginSpotExit(activeSpot.arrivedFrom === "forward" ? "backward" : "forward", null);
         return;
       }
       if (zoom !== ZOOM_MIN) resetZoom();
@@ -347,6 +396,15 @@ export function Reader({
   // fired against a still-null ref. (`isReady` itself is computed above,
   // next to the effect that loads the PDF's metadata.)
 
+  // Shared by the mobile header and the toolbar (both floating overlays on
+  // mobile — see the markup below): forced visible whenever the full-page
+  // interstitial is up, same reasoning as the toolbar always had on its
+  // own — the reader's only way to leave the ad is a prev/next turn, and
+  // the inactivity auto-hide doesn't know that; left alone, staring at the
+  // ad for a few seconds without moving the mouse would fade the only
+  // controls that get them out of it.
+  const controlsVisible = activeSpot ? true : toolbarVisible;
+
   return (
     <div ref={containerRef} className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#05070a]">
       {loadError ? (
@@ -355,15 +413,28 @@ export function Reader({
         <Preloader editionLabel={edition.editionLabel} />
       ) : (
         <>
-          {/* A real header — part of the normal layout flow, not a floating
-              overlay — so everything below it (book, sponsor banner) always
-              starts with genuine breathing room instead of sharing space
-              with a transparent chip. Minimalist on purpose to match the
-              rest of the brand: no pill/button treatment on the logo, just
-              a clean bottom border plus a soft shadow for a bit of depth
-              ("relieve") so it stays visually grounded above the content
-              without competing with it. */}
-          <header className="relative z-30 flex shrink-0 items-center justify-between border-b border-white/10 bg-[#05070a] px-4 py-3 shadow-[0_4px_18px_-6px_rgba(0,0,0,0.55)] sm:px-6">
+          {/* Desktop: a real header, part of the normal layout flow, not a
+              floating overlay — plenty of room there, so it's simplest to
+              just give it genuine space rather than float it. Mobile: the
+              PDF is meant to run truly full-screen (its own explicit
+              request), so here the header floats directly on top of it
+              instead of pushing it down — translucent, and sharing the
+              toolbar's inactivity fade below (`controlsVisible`) so it gets
+              out of the reader's way the same way the page-turn pill does.
+              Minimalist either way to match the rest of the brand: no
+              pill/button treatment on the logo, just a bottom border plus a
+              soft shadow for a bit of depth ("relieve"). */}
+          <header
+            className={cn(
+              "z-50 flex items-center justify-between px-4 py-3 sm:px-6",
+              isMobile
+                ? cn(
+                    "fixed inset-x-0 top-0 border-b border-white/10 bg-[#05070a]/55 backdrop-blur-sm transition-all duration-300",
+                    controlsVisible ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0",
+                  )
+                : "relative shrink-0 border-b border-white/10 bg-[#05070a] shadow-[0_4px_18px_-6px_rgba(0,0,0,0.55)]",
+            )}
+          >
             <div className="flex items-center gap-2 text-white">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/brand/ace-tenis-logo.png" alt={magazineConfig.shortName} className="h-8 w-auto sm:h-9" />
@@ -389,7 +460,7 @@ export function Reader({
               vertical panning silently do nothing while horizontal panning
               (unaffected, since width is fixed by the row layout, not
               content) kept working — not a scroll-math bug, a sizing one. */}
-          <div className="relative flex min-h-0 flex-1 flex-col pt-3 md:flex-row md:pt-0">
+          <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
             {/* The book's own container spans the FULL row width — exactly
                 like before this feature existed — so it centers itself in
                 the true viewport with no help needed from a matching
@@ -456,25 +527,12 @@ export function Reader({
                   pageBox={fullPageBox}
                   isSpread={gutter?.isSpread ?? false}
                   reduceMotion={reduceMotion}
+                  arrivedFrom={activeSpot.arrivedFrom}
+                  exitDirection={exitDirection}
                   onAdvance={requestNext}
                   onCancel={requestPrev}
                 />
               )}
-            </div>
-
-            {/* Mobile: page-turn controls sit in-flow right below the book,
-                between it and the sponsor strip — see Toolbar's "inline"
-                variant doc comment for why this replaces the floating pill
-                here specifically. */}
-            <div className="md:hidden">
-              <Toolbar
-                visible={toolbarVisible}
-                currentPage={currentPage}
-                totalPages={numPages}
-                onPrev={requestPrev}
-                onNext={requestNext}
-                variant="inline"
-              />
             </div>
 
             {/* Mobile: horizontal sponsor strip right below the magazine.
@@ -496,24 +554,20 @@ export function Reader({
             </div>
           </div>
 
-          {/* Desktop only: the floating auto-hiding pill (see Toolbar's
-              "floating" vs "inline" doc comment) — mobile gets its own
-              in-flow copy above, between the book and the sponsor strip.
-              Forced visible whenever the full-page interstitial is up: the
-              reader's only way to leave it is a prev/next turn, and the
-              inactivity auto-hide (see the "show"/timeout effect above)
-              doesn't know that — left alone, staring at the ad for a few
-              seconds without moving the mouse would fade the only controls
-              that get them out of it. */}
-          <div className="hidden md:block">
-            <Toolbar
-              visible={activeSpot ? true : toolbarVisible}
-              currentPage={currentPage}
-              totalPages={numPages}
-              onPrev={requestPrev}
-              onNext={requestNext}
-            />
-          </div>
+          {/* The floating auto-hiding pill, on both mobile and desktop now
+              (see `controlsVisible` above) — more translucent and quicker
+              to fade on mobile (`translucent`, and the shorter mobile
+              `hideDelay` in the auto-hide effect above), since there it
+              sits directly on top of the full-screen PDF rather than in
+              its own reserved strip. */}
+          <Toolbar
+            visible={controlsVisible}
+            currentPage={currentPage}
+            totalPages={numPages}
+            onPrev={requestPrev}
+            onNext={requestNext}
+            translucent={isMobile}
+          />
         </>
       )}
     </div>
