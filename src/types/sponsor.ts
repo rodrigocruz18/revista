@@ -34,6 +34,10 @@ export type Sponsor = {
   /** Full simulated magazine page — desktop and mobile both use this one
    * image, sized to the page's own aspect ratio with a slight center-crop. */
   fullPageImageUrl: string | null;
+  /** Square logo/icon shown in the public "Auspiciadores" list (reader
+   * menu), for every category. Optional on records created before this
+   * field existed — the list falls back to a monogram. */
+  iconUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 };

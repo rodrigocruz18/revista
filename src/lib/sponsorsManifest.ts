@@ -53,7 +53,7 @@ export async function writeSponsorsManifest(sponsors: Sponsor[]): Promise<void> 
 /** Best-effort delete of a sponsor's uploaded images. Never throws — a
  * failure here shouldn't block removing the sponsor from the manifest. */
 export async function deleteSponsorBlobs(sponsor: Sponsor): Promise<void> {
-  const targets = [sponsor.horizontalImageUrl, sponsor.verticalImageUrl, sponsor.fullPageImageUrl].filter(
+  const targets = [sponsor.horizontalImageUrl, sponsor.verticalImageUrl, sponsor.fullPageImageUrl, sponsor.iconUrl].filter(
     (url): url is string => Boolean(url),
   );
   await Promise.allSettled(targets.map((url) => del(url)));

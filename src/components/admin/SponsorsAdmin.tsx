@@ -6,6 +6,7 @@ import { upload } from "@vercel/blob/client";
 import {
   SPONSOR_CATEGORY_LABEL,
   SPONSOR_FULLPAGE_MIN_SIZE,
+  SPONSOR_ICON_MIN_SIZE,
   SPONSOR_IMAGE_SPECS,
 } from "@/config/sponsors";
 import type { Sponsor, SponsorCategory } from "@/types/sponsor";
@@ -15,7 +16,7 @@ type Props = {
   blobConfigured: boolean;
 };
 
-type UploadStage = "idle" | "horizontal" | "vertical" | "fullpage" | "saving" | "done";
+type UploadStage = "idle" | "icon" | "horizontal" | "vertical" | "fullpage" | "saving" | "done";
 
 type PickedImage = { file: File; width: number; height: number };
 
@@ -38,6 +39,28 @@ function readImageDimensions(file: File): Promise<{ width: number; height: numbe
   });
 }
 
+/** Square within 3%, at least SPONSOR_ICON_MIN_SIZE per side. Returns an
+ * error message, or null when the icon is acceptable. */
+function iconProblem(width: number, height: number): string | null {
+  const square = Math.abs(width - height) / Math.max(width, height) <= 0.03;
+  if (!square || width < SPONSOR_ICON_MIN_SIZE || height < SPONSOR_ICON_MIN_SIZE) {
+    return `El icono debe ser cuadrado y de al menos ${SPONSOR_ICON_MIN_SIZE}x${SPONSOR_ICON_MIN_SIZE}px (esta imagen mide ${width}x${height}px).`;
+  }
+  return null;
+}
+
+/** Each icon upload gets a fresh pathname, so replacing one is never masked
+ * by a CDN-cached copy of the previous file at the same URL. */
+function uploadIcon(sponsorId: string, file: File, onProgress?: (percentage: number) => void) {
+  const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+  return upload(`sponsors/${sponsorId}/icon-${Date.now()}.${ext}`, file, {
+    access: "public",
+    handleUploadUrl: "/api/admin/upload",
+    contentType: file.type || undefined,
+    onUploadProgress: onProgress ? (p) => onProgress(p.percentage) : undefined,
+  });
+}
+
 function isValidUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -56,6 +79,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   const [horizontal, setHorizontal] = useState<PickedImage | null>(null);
   const [vertical, setVertical] = useState<PickedImage | null>(null);
   const [fullPage, setFullPage] = useState<PickedImage | null>(null);
+  const [icon, setIcon] = useState<PickedImage | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const [stage, setStage] = useState<UploadStage>("idle");
   const [progress, setProgress] = useState(0);
@@ -63,19 +87,30 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const iconInputRef = useRef<HTMLInputElement>(null);
+  const iconTargetRef = useRef<Sponsor | null>(null);
 
   const busy = stage !== "idle" && stage !== "done";
 
   async function handlePickImage(
     event: ChangeEvent<HTMLInputElement>,
-    slot: "horizontal" | "vertical" | "fullpage",
+    slot: "icon" | "horizontal" | "vertical" | "fullpage",
   ) {
     const file = event.target.files?.[0];
     if (!file) return;
     setImageError(null);
     try {
       const { width, height } = await readImageDimensions(file);
-      if (slot === "horizontal") {
+      if (slot === "icon") {
+        const problem = iconProblem(width, height);
+        if (problem) {
+          setImageError(problem);
+          setIcon(null);
+          event.target.value = "";
+          return;
+        }
+        setIcon({ file, width, height });
+      } else if (slot === "horizontal") {
         const { width: w, height: h } = SPONSOR_IMAGE_SPECS.horizontal;
         if (width !== w || height !== h) {
           setImageError(`El banner horizontal debe medir exactamente ${w}x${h}px (esta imagen mide ${width}x${height}px).`);
@@ -128,6 +163,10 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       setError("La URL de destino no es valida (debe empezar con http:// o https://).");
       return;
     }
+    if (!icon) {
+      setError("Falta el icono del auspiciador.");
+      return;
+    }
     if (category === "fullpage") {
       if (!fullPage) {
         setError("Falta la imagen de pagina completa.");
@@ -144,6 +183,10 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       let horizontalUrl: string | null = null;
       let verticalUrl: string | null = null;
       let fullPageUrl: string | null = null;
+
+      setStage("icon");
+      setProgress(0);
+      const iconUrl = (await uploadIcon(id, icon.file, setProgress)).url;
 
       if (category === "fullpage" && fullPage) {
         setStage("fullpage");
@@ -192,6 +235,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           horizontalImageUrl: horizontalUrl,
           verticalImageUrl: verticalUrl,
           fullPageImageUrl: fullPageUrl,
+          iconUrl,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; sponsors?: Sponsor[] };
@@ -207,6 +251,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       setHorizontal(null);
       setVertical(null);
       setFullPage(null);
+      setIcon(null);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error subiendo el auspiciador.");
@@ -233,6 +278,41 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error actualizando el auspiciador.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function pickIconFor(sponsor: Sponsor) {
+    iconTargetRef.current = sponsor;
+    iconInputRef.current?.click();
+  }
+
+  async function handleReplaceIcon(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    const sponsor = iconTargetRef.current;
+    event.target.value = "";
+    if (!file || !sponsor) return;
+    setError(null);
+    setNotice(null);
+    setBusyId(sponsor.id);
+    try {
+      const { width, height } = await readImageDimensions(file);
+      const problem = iconProblem(width, height);
+      if (problem) throw new Error(problem);
+      const { url } = await uploadIcon(sponsor.id, file);
+      const res = await fetch(`/api/admin/sponsors/${sponsor.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ iconUrl: url }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; sponsors?: Sponsor[] };
+      if (!res.ok) throw new Error(data.error ?? "No se pudo guardar el icono.");
+      setSponsors(data.sponsors ?? sponsors);
+      setNotice(`Icono de "${sponsor.name}" actualizado.`);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error subiendo el icono.");
     } finally {
       setBusyId(null);
     }
@@ -322,6 +402,21 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           </select>
         </div>
 
+        <div>
+          <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-icon">
+            Icono * (cuadrado, minimo {SPONSOR_ICON_MIN_SIZE}x{SPONSOR_ICON_MIN_SIZE}px — PNG con fondo transparente recomendado)
+          </label>
+          <input
+            id="sponsor-icon"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(e) => handlePickImage(e, "icon")}
+            className="w-full text-sm text-white/80 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-white file:transition hover:file:bg-white/20"
+          />
+          {icon && <p className="mt-1 text-xs text-emerald-400">Listo: {icon.width}x{icon.height}px</p>}
+          <p className="mt-1 text-[11px] text-white/40">Se muestra en el listado publico de Auspiciadores (menu de la revista).</p>
+        </div>
+
         {category === "fullpage" ? (
           <div>
             <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-fullpage">
@@ -375,6 +470,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           <div>
             <div className="mb-1 flex justify-between text-xs text-white/60">
               <span>
+                {stage === "icon" && "Subiendo icono..."}
                 {stage === "horizontal" && "Subiendo banner horizontal..."}
                 {stage === "vertical" && "Subiendo banner vertical..."}
                 {stage === "fullpage" && "Subiendo imagen de pagina completa..."}
@@ -403,6 +499,13 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
         </button>
       </form>
 
+      <input
+        ref={iconInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={handleReplaceIcon}
+      />
       <h3 className="mb-4 font-serif text-lg text-white">Auspiciadores cargados ({sponsors.length})</h3>
       {sponsors.length === 0 ? (
         <p className="text-sm text-white/50">Aun no hay auspiciadores.</p>
@@ -415,9 +518,17 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
                 key={sponsor.id}
                 className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/5 p-3"
               >
+                {sponsor.iconUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={sponsor.iconUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg bg-white object-contain p-1" />
+                ) : (
+                  <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-dashed border-amber-300/40 text-center text-[10px] leading-tight text-amber-200/80">
+                    Sin icono
+                  </span>
+                )}
                 {thumb && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={thumb} alt="" className="h-14 w-20 rounded object-cover" />
+                  <img src={thumb} alt="" className="hidden h-14 w-20 rounded object-cover sm:block" />
                 )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-white">
@@ -433,6 +544,13 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
                   </p>
                   <p className="truncate text-xs text-white/40">{sponsor.targetUrl}</p>
                 </div>
+                <button
+                  onClick={() => pickIconFor(sponsor)}
+                  disabled={busyId === sponsor.id || !blobConfigured}
+                  className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/70 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sponsor.iconUrl ? "Cambiar icono" : "Subir icono"}
+                </button>
                 <button
                   onClick={() => handleTogglePause(sponsor)}
                   disabled={busyId === sponsor.id}

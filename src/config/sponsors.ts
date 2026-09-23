@@ -65,6 +65,11 @@ export const SPONSOR_IMAGE_SPECS = {
  * empty bars. */
 export const SPONSOR_FULLPAGE_MIN_SIZE = { width: 1275, height: 1650 } as const;
 
+/** The sponsor icon (public "Auspiciadores" list) must be square and at
+ * least this many pixels per side — it's displayed at ~48px, so this keeps
+ * it sharp on 3x screens without demanding a huge file. */
+export const SPONSOR_ICON_MIN_SIZE = 144;
+
 export function sponsorDrawWeight(category: "light" | "premium"): number {
   return SPONSOR_DRAW_WEIGHT[category] ?? 1;
 }

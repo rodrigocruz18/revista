@@ -11,6 +11,7 @@ type UpsertBody = {
   horizontalImageUrl?: unknown;
   verticalImageUrl?: unknown;
   fullPageImageUrl?: unknown;
+  iconUrl?: unknown;
 };
 
 const CATEGORIES: SponsorCategory[] = ["light", "premium", "fullpage"];
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
   const horizontalImageUrl = typeof body.horizontalImageUrl === "string" && body.horizontalImageUrl ? body.horizontalImageUrl : null;
   const verticalImageUrl = typeof body.verticalImageUrl === "string" && body.verticalImageUrl ? body.verticalImageUrl : null;
   const fullPageImageUrl = typeof body.fullPageImageUrl === "string" && body.fullPageImageUrl ? body.fullPageImageUrl : null;
+  const iconUrl = typeof body.iconUrl === "string" && body.iconUrl ? body.iconUrl : null;
 
   if (!id) {
     return NextResponse.json({ error: "Falta el identificador del auspiciador." }, { status: 400 });
@@ -83,6 +85,10 @@ export async function POST(request: NextRequest) {
   try {
     const sponsors = await readSponsorsManifest();
     const existing = sponsors.find((s) => s.id === id);
+    // Required for new sponsors; an update may keep the icon it already has.
+    if (!iconUrl && !existing?.iconUrl) {
+      return NextResponse.json({ error: "Falta el icono del auspiciador." }, { status: 400 });
+    }
     const now = new Date().toISOString();
     const upserted: Sponsor = {
       id,
@@ -93,6 +99,7 @@ export async function POST(request: NextRequest) {
       horizontalImageUrl: category === "fullpage" ? null : horizontalImageUrl,
       verticalImageUrl: category === "fullpage" ? null : verticalImageUrl,
       fullPageImageUrl: category === "fullpage" ? fullPageImageUrl : null,
+      iconUrl: iconUrl ?? existing?.iconUrl ?? null,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };

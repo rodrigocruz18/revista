@@ -11,6 +11,7 @@ import { Toolbar } from "@/components/tools/Toolbar";
 import { Preloader } from "@/components/ui/Preloader";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { SponsorSlot } from "@/components/sponsors/SponsorSlot";
+import { SiteMenu } from "@/components/menu/SiteMenu";
 import { useMediaQuery, usePrefersReducedMotion } from "@/hooks/useMediaQuery";
 import { useKeyboardShortcuts } from "@/lib/keyboard";
 import { ZOOM_MAX, ZOOM_MIN, magazineConfig } from "@/config/magazine";
@@ -44,6 +45,7 @@ export function Reader({
   const [currentPage, setCurrentPage] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [toolbarVisible, setToolbarVisible] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const baseScale = isMobile ? 1.6 : 2;
 
@@ -293,7 +295,7 @@ export function Reader({
     onCloseOverlay: () => {
       if (zoom !== ZOOM_MIN) resetZoom();
     },
-  });
+  }, !menuOpen);
 
   // The outer ref'd container is always mounted (even during loading/error
   // states) so effects that attach native listeners to it — wheel-zoom,
@@ -310,7 +312,7 @@ export function Reader({
   // inactivity auto-hide doesn't know that; left alone, staring at the ad
   // for a few seconds without moving the mouse would fade the only controls
   // that get past it.
-  const controlsVisible = activeAdSponsor ? true : toolbarVisible;
+  const controlsVisible = activeAdSponsor || menuOpen ? true : toolbarVisible;
 
   return (
     <div ref={containerRef} className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#05070a]">
@@ -347,12 +349,15 @@ export function Reader({
               <img src="/brand/ace-tenis-logo.png" alt={magazineConfig.shortName} className="h-8 w-auto sm:h-9" />
               <span className="hidden text-xs text-white/40 sm:inline">· {edition.editionLabel}</span>
             </div>
-            <Link
-              href="/archivo"
-              className="text-xs font-medium uppercase tracking-wide text-white/50 transition hover:text-white"
-            >
-              Archivo
-            </Link>
+            <div className="flex items-center gap-3 sm:gap-4">
+              <Link
+                href="/archivo"
+                className="text-xs font-medium uppercase tracking-wide text-white/50 transition hover:text-white"
+              >
+                Archivo
+              </Link>
+              <SiteMenu sponsors={sponsors} open={menuOpen} onOpenChange={setMenuOpen} />
+            </div>
           </header>
 
           {/* min-h-0 cascades down this whole row: a flex child defaults to
