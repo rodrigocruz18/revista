@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { LogoIntro } from "@/components/intro/LogoIntro";
 import { AppLoadingContext, type AppLoadingApi } from "@/components/intro/AppLoadingContext";
 
@@ -44,6 +45,14 @@ type LoaderState = { ready: boolean; progress: number };
  * overlay.
  */
 export function IntroGate({ children }: { children: React.ReactNode }) {
+  // The /embed widget lives inside someone else's page (an iframe) — a
+  // full-screen splash there would be wrong, so it renders bare.
+  const pathname = usePathname();
+  if (pathname?.startsWith("/embed")) return <>{children}</>;
+  return <IntroGateInner>{children}</IntroGateInner>;
+}
+
+function IntroGateInner({ children }: { children: React.ReactNode }) {
   const [introActive, setIntroActive] = useState(true);
   const [loaders, setLoaders] = useState<Record<string, LoaderState>>({});
   const claimedRef = useRef(false);

@@ -5,7 +5,7 @@
  * edition is always whatever file has the newest YYYY-MM prefix — nobody
  * has to touch code to publish a new issue.
  *
- * Expected file name format: YYYY-MM-nombre.pdf
+ * Expected file name format: YYYY-MM.pdf or YYYY-MM-nombre.pdf
  *   e.g. 2026-08-revista-tenis.pdf
  */
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
@@ -31,7 +31,8 @@ const MONTHS_ES = [
   "Diciembre",
 ];
 
-const FILENAME_PATTERN = /^(\d{4})-(\d{2})-(.+)\.pdf$/i;
+// The "-nombre" suffix is optional: "2026-08.pdf" is as valid as "2026-08-revista.pdf".
+const FILENAME_PATTERN = /^(\d{4})-(\d{2})(?:-(.+))?\.pdf$/i;
 const COVER_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
 
 type RawMagazine = {

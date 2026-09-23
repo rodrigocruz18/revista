@@ -1,0 +1,614 @@
+/* ---- /embed: "latest edition" widget for third-party iframes ----
+   Everything is sized off the iframe's own viewport (vw/vh/vmin) and, for
+   the deck, container query units — so the widget adapts to whatever size
+   the host gives the iframe, never scrolls, and has no margins or borders
+   of its own. */
+
+html:has(.ew),
+body:has(.ew) {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #fff;
+  scrollbar-width: none;
+}
+html:has(.ew)::-webkit-scrollbar,
+body:has(.ew)::-webkit-scrollbar {
+  display: none;
+}
+
+.ew {
+  --ink: #0b0f0d;
+  --muted: #6b7068;
+  --line: #e6e7e1;
+  --accent: #65a30d;
+  --accent-soft: #bef264;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --pad: clamp(8px, 4vmin, 40px);
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 2.5vmin, 24px);
+  padding: var(--pad);
+  box-sizing: border-box;
+  overflow: hidden;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---------- Deck ---------- */
+
+.ew-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  container-type: size;
+}
+
+.ew-deck {
+  --px: 0;
+  --py: 0;
+  position: relative;
+  aspect-ratio: var(--deck-ratio);
+  height: min(94cqh, calc(96cqw / var(--deck-ratio)));
+  perspective: 1400px;
+  touch-action: pan-y;
+}
+
+.ew-ground {
+  position: absolute;
+  left: 4%;
+  width: 70%;
+  bottom: -3.5%;
+  height: 7%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(11, 15, 13, 0.28), rgba(11, 15, 13, 0));
+  filter: blur(6px);
+  animation: ewGround 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.ew-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  aspect-ratio: var(--ratio);
+  display: block;
+  transform-origin: 50% 100%;
+  transition:
+    transform 750ms var(--ease),
+    opacity 550ms var(--ease);
+  outline: none;
+  -webkit-user-drag: none;
+}
+.ew-card:not(.ew-card--front) {
+  cursor: pointer;
+}
+
+.ew-deal,
+.ew-float,
+.ew-face {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.ew-deal {
+  animation: ewDeal 950ms var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 110ms + 80ms);
+}
+.ew--dealt .ew-deal {
+  animation: none;
+}
+
+.ew-card--front .ew-float {
+  animation: ewFloat 6s ease-in-out infinite;
+}
+
+.ew-face {
+  overflow: hidden;
+  border-radius: 2px 4px 4px 2px;
+  background: #f3f3ef;
+  box-shadow:
+    0 1px 2px rgba(11, 15, 13, 0.08),
+    0 8px 18px -6px rgba(11, 15, 13, 0.22),
+    0 28px 50px -22px rgba(11, 15, 13, 0.35);
+  transform: rotateY(calc(var(--px) * 7deg)) rotateX(calc(var(--py) * -6deg));
+  transition:
+    transform 400ms var(--ease),
+    box-shadow 400ms var(--ease);
+}
+.ew-card:not(.ew-card--front) .ew-face {
+  transform: none;
+}
+.ew-card--front:hover .ew-face,
+.ew-card--front:focus-visible .ew-face {
+  box-shadow:
+    0 1px 2px rgba(11, 15, 13, 0.08),
+    0 14px 26px -8px rgba(11, 15, 13, 0.28),
+    0 40px 70px -26px rgba(11, 15, 13, 0.45);
+}
+.ew-card--front:focus-visible .ew-face {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.ew-face > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: ewFadeIn 500ms ease-out both;
+  -webkit-user-drag: none;
+}
+
+/* Spine highlight: a thin shaded band on the binding edge sells "printed
+   magazine" instead of "flat image". */
+.ew-face::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3.5%;
+  z-index: 2;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.16), rgba(255, 255, 255, 0.14) 45%, rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+
+.ew-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: #fff;
+  opacity: var(--dim, 0);
+  transition: opacity 600ms var(--ease);
+  pointer-events: none;
+}
+.ew-card--front .ew-dim {
+  opacity: 0;
+}
+
+.ew-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, #efefea 30%, #f8f8f5 50%, #efefea 70%) 0 0 / 250% 100%;
+  animation: ewSkeleton 1.4s linear infinite;
+}
+
+.ew-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8%;
+  background: radial-gradient(ellipse at 50% 30%, #1a2a1c, #0b0f0d 70%);
+  color: #f4f1e8;
+  font-family: var(--font-playfair), Georgia, serif;
+  font-size: clamp(10px, 5cqh, 28px);
+}
+.ew-fallback img {
+  width: 80%;
+}
+
+/* Periodic diagonal light sweep across the front cover. */
+.ew-shine {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.38) 50%, transparent 62%);
+  transform: translateX(-140%);
+  pointer-events: none;
+}
+.ew-card--front .ew-shine {
+  animation: ewShine 7s ease-in-out 1.6s infinite;
+}
+
+/* Page-curl hint in the bottom-right corner: the square's top-left half is
+   the back of the lifted page, its bottom-right half the (white) page
+   underneath — the fold runs along the diagonal between them. */
+.ew-curl {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 0;
+  aspect-ratio: 1;
+  background: linear-gradient(
+    to top left,
+    #ffffff 0%,
+    #f2f2ee 44%,
+    #d4d4cc 49.6%,
+    #f6f6f2 50.4%,
+    #e6e6df 78%,
+    #fbfbf8 100%
+  );
+  box-shadow: -3px -3px 9px -3px rgba(11, 15, 13, 0.4);
+  border-bottom-right-radius: 4px;
+  pointer-events: none;
+}
+.ew-card--front .ew-curl {
+  animation: ewCurl 7s var(--ease) 3.2s infinite;
+}
+.ew-card--front:hover .ew-curl {
+  animation: none;
+  width: 17%;
+  transition: width 350ms var(--ease);
+}
+
+/* ---------- Info ---------- */
+
+.ew-info {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(4px, 1.6vmin, 14px);
+  text-align: center;
+  min-width: 0;
+}
+
+.ew-logo {
+  display: none;
+  width: clamp(90px, 22vw, 260px);
+  height: auto;
+  filter: brightness(0);
+  opacity: 0.88;
+  -webkit-user-drag: none;
+}
+
+.ew-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: inherit;
+  gap: clamp(2px, 0.8vmin, 8px);
+  animation: ewCopyIn 600ms var(--ease) both;
+}
+
+.ew-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55em;
+  margin: 0;
+  font-size: clamp(9px, 2.4vmin, 13px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ew-live {
+  position: relative;
+  width: 0.62em;
+  height: 0.62em;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ew-live::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ewPulse 1.8s ease-out infinite;
+}
+
+.ew-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: inherit;
+  gap: 0 0.3em;
+  margin: 0;
+  font-family: var(--font-playfair), Georgia, serif;
+  font-weight: 500;
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  font-size: clamp(18px, min(8vw, 6.5vh), 56px);
+}
+.ew-year {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 0.42em;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.ew-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: clamp(8px, 2.4vmin, 22px);
+}
+
+.ew-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.72em 1.25em;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: clamp(11px, 2.6vmin, 15px);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background 250ms var(--ease),
+    transform 250ms var(--ease);
+}
+.ew-cta svg {
+  width: 1.1em;
+  height: 1.1em;
+  transition: transform 250ms var(--ease);
+}
+.ew-cta:hover {
+  background: #1d2a20;
+}
+.ew-cta:hover svg {
+  transform: translateX(3px);
+}
+.ew-cta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.ew-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(6px, 1.6vmin, 12px);
+}
+.ew-nav button {
+  display: grid;
+  place-items: center;
+  width: clamp(26px, 6vmin, 40px);
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    border-color 200ms var(--ease),
+    background 200ms var(--ease),
+    opacity 200ms var(--ease);
+}
+.ew-nav button svg {
+  width: 45%;
+  height: 45%;
+}
+.ew-nav button:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+.ew-nav button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.ew-nav button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ew-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+  font-size: clamp(9px, 2.2vmin, 12px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.ew-track {
+  position: relative;
+  width: clamp(24px, 8vmin, 64px);
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.ew-track > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: var(--ink);
+  transition: transform 600ms var(--ease);
+}
+
+.ew--empty {
+  align-items: center;
+  justify-content: center;
+}
+.ew-empty-title {
+  margin: 0;
+  font-family: var(--font-playfair), Georgia, serif;
+  font-size: clamp(18px, 6vmin, 40px);
+}
+
+/* ---------- Layouts by iframe shape ---------- */
+
+/* Landscape: deck left, editorial copy right. */
+@media (min-aspect-ratio: 5/4) {
+  .ew {
+    flex-direction: row;
+    align-items: stretch;
+    gap: clamp(10px, 4vw, 64px);
+  }
+  .ew-stage {
+    flex: 0 1 50%;
+  }
+  .ew-info {
+    flex: 1 1 0;
+    align-items: flex-start;
+    justify-content: center;
+    text-align: left;
+    gap: clamp(6px, 3vh, 26px);
+  }
+  .ew-logo {
+    display: block;
+  }
+  .ew-title {
+    font-size: clamp(18px, min(7.5vw, 15vh), 104px);
+  }
+  .ew-actions {
+    justify-content: flex-start;
+  }
+  .ew-kicker {
+    font-size: clamp(9px, 2.6vh, 13px);
+  }
+  .ew-cta {
+    font-size: clamp(11px, 3.4vh, 16px);
+  }
+  .ew-nav button {
+    width: clamp(26px, 8vh, 42px);
+  }
+  .ew-count {
+    font-size: clamp(9px, 2.8vh, 12px);
+  }
+}
+
+/* Tall enough portrait: show the wordmark above the deck's caption. */
+@media (max-aspect-ratio: 5/4) and (min-height: 560px) {
+  .ew-logo {
+    display: block;
+    width: clamp(90px, 34vw, 200px);
+    order: 3;
+    opacity: 0.5;
+  }
+}
+
+/* Short frames: shed the least essential pieces first. */
+@media (max-height: 340px) {
+  .ew-logo {
+    display: none;
+  }
+}
+@media (max-height: 300px) and (max-aspect-ratio: 5/4) {
+  .ew-kicker {
+    display: none;
+  }
+}
+@media (max-height: 180px) {
+  .ew-kicker,
+  .ew-count {
+    display: none;
+  }
+  .ew-cta {
+    padding: 0.5em 0.9em;
+  }
+}
+@media (max-width: 220px) {
+  .ew-cta {
+    display: none;
+  }
+}
+
+/* ---------- Motion ---------- */
+
+@keyframes ewDeal {
+  from {
+    opacity: 0;
+    transform: translate3d(8%, 22%, 0) rotate(-5deg) scale(0.92);
+  }
+}
+
+@keyframes ewFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -1.8%, 0);
+  }
+}
+
+@keyframes ewGround {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scaleX(0.9);
+    opacity: 0.7;
+  }
+}
+
+@keyframes ewShine {
+  0% {
+    transform: translateX(-140%);
+  }
+  22%,
+  100% {
+    transform: translateX(140%);
+  }
+}
+
+@keyframes ewCurl {
+  0%,
+  58% {
+    width: 0;
+  }
+  66% {
+    width: 15%;
+  }
+  74% {
+    width: 12.5%;
+  }
+  84%,
+  100% {
+    width: 0;
+  }
+}
+
+@keyframes ewPulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+@keyframes ewCopyIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+}
+
+@keyframes ewFadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes ewSkeleton {
+  to {
+    background-position: -150% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ew-card--front .ew-float,
+  .ew-card--front .ew-shine,
+  .ew-card--front .ew-curl,
+  .ew-ground,
+  .ew-live::after {
+    animation: none;
+  }
+}

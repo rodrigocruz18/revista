@@ -12,7 +12,7 @@ export type PdfjsModule = typeof import("pdfjs-dist");
 
 let pdfjsPromise: Promise<PdfjsModule> | null = null;
 
-async function loadPdfjs(): Promise<PdfjsModule> {
+export async function loadPdfjs(): Promise<PdfjsModule> {
   if (!pdfjsPromise) {
     pdfjsPromise = import("pdfjs-dist").then((pdfjs) => {
       // Served as a static file (see scripts/copy-pdf-worker.ts) so the

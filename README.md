@@ -101,6 +101,23 @@ y un archivo histórico con todas las ediciones.
   disponibles se vuelve frágil). Doble clic o volver a 100% restaura el
   flipbook normal.
 
+## Widget para embeber (`/embed`)
+
+Portada de la edición más reciente en un mazo de revistas (las anteriores
+asoman detrás y se recorren con flechas, swipe o teclado). Fondo blanco, sin
+márgenes ni bordes, se adapta al tamaño del iframe y nunca muestra scroll.
+Cada click abre la edición en `https://www.acetenis.cl` (configurable con
+`NEXT_PUBLIC_SITE_URL`) en una pestaña nueva.
+
+```html
+<iframe src="https://<dominio-de-este-deploy>/embed"
+        title="Revista Ace Tenis"
+        style="border:0;width:100%;height:420px" loading="lazy"></iframe>
+```
+
+Funciona desde ~250×160 px (banner) hasta formatos grandes; en horizontal
+muestra portada + texto lado a lado, en vertical el texto va debajo.
+
 ## Notas de despliegue
 
 - Listo para Vercel: push a GitHub, importar el repo, sin variables de

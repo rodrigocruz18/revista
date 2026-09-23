@@ -14,6 +14,16 @@ const nextConfig: NextConfig = {
   // corner of the screen — purely a dev-time debugging aid, not something
   // that should show up while testing the reader itself.
   devIndicators: false,
+  // /embed is meant to be iframed by third-party sites — state that
+  // explicitly so no default (or future) framing restriction blocks it.
+  async headers() {
+    return [
+      {
+        source: "/embed",
+        headers: [{ key: "Content-Security-Policy", value: "frame-ancestors *" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

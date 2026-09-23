@@ -9,6 +9,9 @@ export const magazineConfig = {
   description: "Revista digital de tenis",
   locale: "es-CL",
   themeColor: "#0b0f0d",
+  /** Public site the embeddable widget (/embed) links out to. Overridable
+   * per deploy via NEXT_PUBLIC_SITE_URL (e.g. for a staging domain). */
+  siteUrl: (process.env.NEXT_PUBLIC_SITE_URL || "https://www.acetenis.cl").replace(/\/$/, ""),
   magazinesDir: "/magazines",
   coversDir: "/magazines/covers",
 } as const;
