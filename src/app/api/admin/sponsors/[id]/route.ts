@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/adminAuth";
 import { del } from "@vercel/blob";
 import { deleteSponsorBlobs, readSponsorsManifest, writeSponsorsManifest } from "@/lib/sponsorsManifest";
+import { brandKey } from "@/lib/sponsorBrands";
 import type { Sponsor, SponsorStatus } from "@/types/sponsor";
 
 type PatchBody = { status?: unknown; iconUrl?: unknown };
@@ -48,12 +49,21 @@ export async function PATCH(request: NextRequest, context: RouteContext<"/api/ad
     if (!target) {
       return NextResponse.json({ error: "Auspiciador no encontrado." }, { status: 404 });
     }
-    const updated = sponsors.map((s) => (s.id === id ? { ...s, ...changes, updatedAt: new Date().toISOString() } : s));
+    const now = new Date().toISOString();
+    const targetBrand = brandKey(target);
+    const updated = sponsors.map((s) => {
+      if (s.id === id) return { ...s, ...changes, updatedAt: now };
+      // The icon belongs to the brand, so every placement of it gets the new one.
+      if (changes.iconUrl && brandKey(s) === targetBrand) return { ...s, iconUrl: changes.iconUrl, updatedAt: now };
+      return s;
+    });
     await writeSponsorsManifest(updated);
-    // Best-effort cleanup of a replaced icon (each upload gets a fresh
-    // pathname, so the old file would otherwise linger in the store).
-    if (changes.iconUrl && target.iconUrl && target.iconUrl !== changes.iconUrl) {
-      await del(target.iconUrl).catch(() => {});
+    // Best-effort cleanup of replaced icons no record uses anymore (each
+    // upload gets a fresh pathname, so they'd otherwise linger in the store).
+    if (changes.iconUrl) {
+      const stillUsed = new Set(updated.map((s) => s.iconUrl));
+      const replaced = new Set(sponsors.filter((s) => brandKey(s) === targetBrand).map((s) => s.iconUrl));
+      await Promise.allSettled([...replaced].filter((url): url is string => Boolean(url) && !stillUsed.has(url)).map((url) => del(url)));
     }
     return NextResponse.json({ ok: true, sponsors: updated });
   } catch (err) {
@@ -81,7 +91,10 @@ export async function DELETE(_request: Request, context: RouteContext<"/api/admi
     await writeSponsorsManifest(remaining);
     // Best-effort — the manifest is the source of truth for what the site
     // shows, so it's already correctly updated even if this cleanup fails.
-    await deleteSponsorBlobs(target);
+    // The icon is shared by the brand's other placements — keep it if any
+    // remaining record still points to it.
+    const iconInUse = remaining.some((s) => s.iconUrl && s.iconUrl === target.iconUrl);
+    await deleteSponsorBlobs(iconInUse ? { ...target, iconUrl: null } : target);
 
     return NextResponse.json({ ok: true, sponsors: remaining });
   } catch (err) {

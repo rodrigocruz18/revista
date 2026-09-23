@@ -10,6 +10,7 @@ import {
   SPONSOR_IMAGE_SPECS,
 } from "@/config/sponsors";
 import type { Sponsor, SponsorCategory } from "@/types/sponsor";
+import { brandKey, sponsorDomain, uniqueBrands } from "@/lib/sponsorBrands";
 
 type Props = {
   initialSponsors: Sponsor[];
@@ -73,6 +74,9 @@ function isValidUrl(value: string): boolean {
 export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   const router = useRouter();
   const [sponsors, setSponsors] = useState(initialSponsors);
+  // "" = new sponsor; otherwise the id of a record of an existing brand,
+  // whose name/link/icon the new placement reuses.
+  const [brandOf, setBrandOf] = useState("");
   const [name, setName] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [category, setCategory] = useState<SponsorCategory>("light");
@@ -91,6 +95,12 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   const iconTargetRef = useRef<Sponsor | null>(null);
 
   const busy = stage !== "idle" && stage !== "done";
+  const brands = uniqueBrands(sponsors).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const selectedBrand = brandOf ? sponsors.find((s) => s.id === brandOf) ?? null : null;
+  // Placements of the same brand listed together.
+  const sortedSponsors = [...sponsors].sort(
+    (a, b) => a.name.localeCompare(b.name, "es") || brandKey(a).localeCompare(brandKey(b)) || a.category.localeCompare(b.category),
+  );
 
   async function handlePickImage(
     event: ChangeEvent<HTMLInputElement>,
@@ -153,19 +163,21 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
     setError(null);
     setNotice(null);
 
-    const trimmedName = name.trim();
+    const trimmedName = selectedBrand ? selectedBrand.name : name.trim();
     const trimmedUrl = targetUrl.trim();
-    if (!trimmedName) {
-      setError("El nombre del auspiciador es obligatorio.");
-      return;
-    }
-    if (!trimmedUrl || !isValidUrl(trimmedUrl)) {
-      setError("La URL de destino no es valida (debe empezar con http:// o https://).");
-      return;
-    }
-    if (!icon) {
-      setError("Falta el icono del auspiciador.");
-      return;
+    if (!selectedBrand) {
+      if (!trimmedName) {
+        setError("El nombre del auspiciador es obligatorio.");
+        return;
+      }
+      if (!trimmedUrl || !isValidUrl(trimmedUrl)) {
+        setError("La URL de destino no es valida (debe empezar con http:// o https://).");
+        return;
+      }
+      if (!icon) {
+        setError("Falta el icono del auspiciador.");
+        return;
+      }
     }
     if (category === "fullpage") {
       if (!fullPage) {
@@ -184,9 +196,12 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       let verticalUrl: string | null = null;
       let fullPageUrl: string | null = null;
 
-      setStage("icon");
-      setProgress(0);
-      const iconUrl = (await uploadIcon(id, icon.file, setProgress)).url;
+      let iconUrl: string | null = null;
+      if (!selectedBrand && icon) {
+        setStage("icon");
+        setProgress(0);
+        iconUrl = (await uploadIcon(id, icon.file, setProgress)).url;
+      }
 
       if (category === "fullpage" && fullPage) {
         setStage("fullpage");
@@ -236,6 +251,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           verticalImageUrl: verticalUrl,
           fullPageImageUrl: fullPageUrl,
           iconUrl,
+          brandOf: selectedBrand?.id,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; sponsors?: Sponsor[] };
@@ -252,6 +268,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       setVertical(null);
       setFullPage(null);
       setIcon(null);
+      setBrandOf("");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error subiendo el auspiciador.");
@@ -355,6 +372,42 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       )}
 
       <form ref={formRef} onSubmit={handleSubmit} className="mb-8 space-y-4 rounded-2xl border border-white/10 bg-white/5 p-6">
+        <div>
+          <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-brand">
+            Auspiciador
+          </label>
+          <select
+            id="sponsor-brand"
+            value={brandOf}
+            onChange={(e) => setBrandOf(e.target.value)}
+            className="w-full max-w-md rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-white outline-none focus:border-white/40"
+          >
+            <option value="" className="bg-[#0b0f0d]">+ Nuevo auspiciador</option>
+            {brands.map((brand) => (
+              <option key={brand.id} value={brand.id} className="bg-[#0b0f0d]">
+                {brand.name} — {sponsorDomain(brand.targetUrl)}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-white/40">
+            Si el auspiciador ya existe y contrata otro tipo de publicidad, eligelo aqui: se usan su nombre, link e
+            icono, y en el listado publico aparece una sola vez.
+          </p>
+        </div>
+
+        {selectedBrand ? (
+          <div className="flex items-center gap-3 rounded-xl bg-black/20 p-3">
+            {selectedBrand.iconUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={selectedBrand.iconUrl} alt="" className="h-10 w-10 rounded-lg object-cover" />
+            )}
+            <div className="min-w-0">
+              <p className="truncate text-sm text-white">{selectedBrand.name}</p>
+              <p className="truncate text-xs text-white/40">{selectedBrand.targetUrl}</p>
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-name">
@@ -383,6 +436,9 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           </div>
         </div>
 
+        </>
+        )}
+
         <div>
           <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-category">
             Categoria *
@@ -402,6 +458,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           </select>
         </div>
 
+        {!selectedBrand && (
         <div>
           <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-icon">
             Icono * (cuadrado, minimo {SPONSOR_ICON_MIN_SIZE}x{SPONSOR_ICON_MIN_SIZE}px — PNG con fondo transparente recomendado)
@@ -416,6 +473,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           {icon && <p className="mt-1 text-xs text-emerald-400">Listo: {icon.width}x{icon.height}px</p>}
           <p className="mt-1 text-[11px] text-white/40">Se muestra en el listado publico de Auspiciadores (menu de la revista).</p>
         </div>
+        )}
 
         {category === "fullpage" ? (
           <div>
@@ -511,7 +569,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
         <p className="text-sm text-white/50">Aun no hay auspiciadores.</p>
       ) : (
         <ul className="space-y-3">
-          {sponsors.map((sponsor) => {
+          {sortedSponsors.map((sponsor) => {
             const thumb = sponsor.horizontalImageUrl ?? sponsor.fullPageImageUrl ?? sponsor.verticalImageUrl;
             return (
               <li

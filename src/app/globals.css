@@ -588,7 +588,7 @@ body {
 @media (min-width: 768px) {
   .site-menu-panel {
     inset: 0 0 0 auto;
-    width: min(480px, 100vw);
+    width: min(440px, 100vw);
     max-height: none;
     border-radius: 0;
     animation-name: siteMenuDrawerIn;

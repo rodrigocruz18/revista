@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Sponsor } from "@/types/sponsor";
+import { sponsorDomain, uniqueBrands } from "@/lib/sponsorBrands";
 
 const DRAG_CLOSE_PX = 90;
 
@@ -13,8 +14,9 @@ const DRAG_CLOSE_PX = 90;
  * clip) a fixed overlay rendered inside it.
  *
  * Mobile gets a bottom sheet that can be dragged down to dismiss; desktop a
- * right-hand drawer. Sponsors are shown as a two-column grid of cards and
- * reshuffled every time the panel opens, so no sponsor is permanently first.
+ * right-hand drawer. Each brand appears once (a sponsor with several
+ * placements has several records — see @/lib/sponsorBrands), and the order
+ * is reshuffled every time the panel opens, so no one is permanently first.
  */
 export function SiteMenu({
   sponsors,
@@ -45,7 +47,7 @@ export function SiteMenu({
   }, [open, onOpenChange]);
 
   const openPanel = () => {
-    setOrder(shuffle(sponsors));
+    setOrder(shuffle(uniqueBrands(sponsors)));
     onOpenChange(true);
   };
   const close = () => onOpenChange(false);
@@ -139,9 +141,9 @@ export function SiteMenu({
               {order.length === 0 ? (
                 <p className="px-5 pb-10 text-sm text-white/50 md:px-8">Muy pronto conoceras a nuestros auspiciadores.</p>
               ) : (
-                <ul className="grid min-h-0 flex-1 grid-cols-2 content-start gap-3 overflow-y-auto overscroll-contain px-5 pb-6 md:gap-4 md:px-8 [padding-bottom:max(1.5rem,env(safe-area-inset-bottom))]">
+                <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 md:px-8 [padding-bottom:max(1.5rem,env(safe-area-inset-bottom))]">
                   {order.map((sponsor, index) => (
-                    <SponsorCard key={sponsor.id} sponsor={sponsor} index={index} />
+                    <SponsorRow key={sponsor.id} sponsor={sponsor} index={index} />
                   ))}
                 </ul>
               )}
@@ -153,29 +155,31 @@ export function SiteMenu({
   );
 }
 
-function SponsorCard({ sponsor, index }: { sponsor: Sponsor; index: number }) {
-  const name = sponsor.name.toLocaleUpperCase("es-CL");
+function SponsorRow({ sponsor, index }: { sponsor: Sponsor; index: number }) {
   return (
     <li
-      className="site-menu-item group relative flex flex-col rounded-3xl bg-gradient-to-b from-white/[0.07] to-white/[0.02] p-4 transition duration-300 hover:-translate-y-0.5 hover:from-white/[0.1] md:p-5"
-      style={{ animationDelay: `${80 + index * 50}ms` }}
+      className="site-menu-item group relative flex items-center gap-4 border-t border-white/[0.07] py-4 first:border-t-0 md:gap-5 md:py-5"
+      style={{ animationDelay: `${80 + index * 45}ms` }}
     >
       <SponsorIcon sponsor={sponsor} />
-      <p className="mt-4 line-clamp-2 min-h-[2.5em] break-words text-[12px] font-semibold leading-[1.25] tracking-[0.1em] text-white/90 md:text-[13px] md:tracking-[0.14em]">
-        {name}
-      </p>
-      {/* The link stretches over the whole card (after:inset-0), so tapping
+      <div className="min-w-0 flex-1">
+        <p className="line-clamp-2 break-words text-[13px] font-semibold leading-snug tracking-[0.12em] text-white/90 transition-colors group-hover:text-white">
+          {sponsor.name.toLocaleUpperCase("es-CL")}
+        </p>
+        <p className="mt-1 truncate text-xs text-white/35">{sponsorDomain(sponsor.targetUrl)}</p>
+      </div>
+      {/* The link stretches over the whole row (after:inset-0), so tapping
           anywhere on it works — "Ver" is just its visible label. */}
       <a
         href={sponsor.targetUrl}
         target="_blank"
         rel="noopener sponsored"
         aria-label={`Ver ${sponsor.name}`}
-        className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/[0.08] px-3.5 py-1.5 text-[11px] font-medium tracking-wide text-white/75 transition after:absolute after:inset-0 after:rounded-3xl group-hover:bg-lime-300 group-hover:text-black"
+        className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium uppercase tracking-[0.16em] text-white/50 transition-colors after:absolute after:inset-0 group-hover:text-lime-300"
       >
         Ver
-        <svg viewBox="0 0 16 16" className="h-3 w-3 transition group-hover:translate-x-px group-hover:-translate-y-px" aria-hidden>
-          <path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" aria-hidden>
+          <path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </a>
     </li>
@@ -186,7 +190,12 @@ function SponsorIcon({ sponsor }: { sponsor: Sponsor }) {
   if (sponsor.iconUrl) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={sponsor.iconUrl} alt="" loading="lazy" className="h-14 w-14 rounded-2xl object-cover md:h-16 md:w-16" />
+      <img
+        src={sponsor.iconUrl}
+        alt=""
+        loading="lazy"
+        className="h-12 w-12 shrink-0 rounded-xl object-cover transition-transform duration-300 group-hover:scale-[1.04] md:h-14 md:w-14"
+      />
     );
   }
   // Sponsors created before icons existed: a monogram instead.
@@ -200,7 +209,7 @@ function SponsorIcon({ sponsor }: { sponsor: Sponsor }) {
   return (
     <span
       aria-hidden
-      className="flex h-14 w-14 items-center justify-center rounded-2xl bg-lime-300/10 font-serif text-xl text-lime-200 md:h-16 md:w-16"
+      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] font-serif text-lg text-white/70 md:h-14 md:w-14"
     >
       {initials}
     </span>

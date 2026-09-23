@@ -38,6 +38,10 @@ export type Sponsor = {
    * menu), for every category. Optional on records created before this
    * field existed — the list falls back to a monogram. */
   iconUrl?: string | null;
+  /** Groups the placements of one advertiser (see @/lib/sponsorBrands).
+   * Name, link and icon are shared across a brand's records. Absent on
+   * records created before brands existed. */
+  brandId?: string;
   createdAt: string;
   updatedAt: string;
 };

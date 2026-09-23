@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/adminAuth";
 import { readSponsorsManifest, writeSponsorsManifest } from "@/lib/sponsorsManifest";
+import { brandKey } from "@/lib/sponsorBrands";
 import type { Sponsor, SponsorCategory } from "@/types/sponsor";
 
 type UpsertBody = {
@@ -12,6 +13,8 @@ type UpsertBody = {
   verticalImageUrl?: unknown;
   fullPageImageUrl?: unknown;
   iconUrl?: unknown;
+  /** Id of an existing sponsor record: the new placement joins that brand. */
+  brandOf?: unknown;
 };
 
 const CATEGORIES: SponsorCategory[] = ["light", "premium", "fullpage"];
@@ -51,22 +54,17 @@ export async function POST(request: NextRequest) {
   }
 
   const id = typeof body.id === "string" ? body.id.trim() : "";
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const targetUrl = typeof body.targetUrl === "string" ? body.targetUrl.trim() : "";
+  const brandOf = typeof body.brandOf === "string" ? body.brandOf.trim() : "";
   const category = typeof body.category === "string" ? (body.category as SponsorCategory) : undefined;
   const horizontalImageUrl = typeof body.horizontalImageUrl === "string" && body.horizontalImageUrl ? body.horizontalImageUrl : null;
   const verticalImageUrl = typeof body.verticalImageUrl === "string" && body.verticalImageUrl ? body.verticalImageUrl : null;
   const fullPageImageUrl = typeof body.fullPageImageUrl === "string" && body.fullPageImageUrl ? body.fullPageImageUrl : null;
-  const iconUrl = typeof body.iconUrl === "string" && body.iconUrl ? body.iconUrl : null;
+  let name = typeof body.name === "string" ? body.name.trim() : "";
+  let targetUrl = typeof body.targetUrl === "string" ? body.targetUrl.trim() : "";
+  let iconUrl = typeof body.iconUrl === "string" && body.iconUrl ? body.iconUrl : null;
 
   if (!id) {
     return NextResponse.json({ error: "Falta el identificador del auspiciador." }, { status: 400 });
-  }
-  if (!name) {
-    return NextResponse.json({ error: "El nombre es obligatorio." }, { status: 400 });
-  }
-  if (!targetUrl || !isValidUrl(targetUrl)) {
-    return NextResponse.json({ error: "La URL de destino no es valida (debe incluir http:// o https://)." }, { status: 400 });
   }
   if (!category || !CATEGORIES.includes(category)) {
     return NextResponse.json({ error: "Categoria invalida." }, { status: 400 });
@@ -83,12 +81,39 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const sponsors = await readSponsorsManifest();
+    let sponsors = await readSponsorsManifest();
     const existing = sponsors.find((s) => s.id === id);
+    let brandId = existing?.brandId ?? id;
+
+    if (brandOf) {
+      // New placement for an existing sponsor: name, link and icon come
+      // from that sponsor, never retyped — that's what keeps one brand
+      // from showing up twice in the public list.
+      const anchor = sponsors.find((s) => s.id === brandOf);
+      if (!anchor) {
+        return NextResponse.json({ error: "El auspiciador seleccionado ya no existe." }, { status: 400 });
+      }
+      const group = sponsors.filter((s) => brandKey(s) === brandKey(anchor));
+      brandId = anchor.brandId ?? anchor.id;
+      name = anchor.name;
+      targetUrl = anchor.targetUrl;
+      iconUrl = group.find((s) => s.iconUrl)?.iconUrl ?? iconUrl;
+      // Legacy records grouped only by URL get the explicit id from now on.
+      const groupIds = new Set(group.map((s) => s.id));
+      sponsors = sponsors.map((s) => (groupIds.has(s.id) && !s.brandId ? { ...s, brandId } : s));
+    }
+
+    if (!name) {
+      return NextResponse.json({ error: "El nombre es obligatorio." }, { status: 400 });
+    }
+    if (!targetUrl || !isValidUrl(targetUrl)) {
+      return NextResponse.json({ error: "La URL de destino no es valida (debe incluir http:// o https://)." }, { status: 400 });
+    }
     // Required for new sponsors; an update may keep the icon it already has.
     if (!iconUrl && !existing?.iconUrl) {
       return NextResponse.json({ error: "Falta el icono del auspiciador." }, { status: 400 });
     }
+
     const now = new Date().toISOString();
     const upserted: Sponsor = {
       id,
@@ -100,6 +125,7 @@ export async function POST(request: NextRequest) {
       verticalImageUrl: category === "fullpage" ? null : verticalImageUrl,
       fullPageImageUrl: category === "fullpage" ? fullPageImageUrl : null,
       iconUrl: iconUrl ?? existing?.iconUrl ?? null,
+      brandId,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
