@@ -2,13 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Sponsor } from "@/types/sponsor";
-import {
-  SPONSOR_INITIAL_DELAY_MS,
-  SPONSOR_REST_MS,
-  SPONSOR_TICK_MS,
-  sponsorDrawWeight,
-  sponsorExposureMs,
-} from "@/config/sponsors";
+import { SPONSOR_TICK_MS } from "@/config/sponsors";
+import { DEFAULT_SPONSOR_SETTINGS, type SponsorSettings } from "@/lib/sponsorSettings";
 
 type RotationCategory = "light" | "premium";
 export type BannerSponsor = Sponsor & { category: RotationCategory };
@@ -17,27 +12,35 @@ function isBannerSponsor(sponsor: Sponsor): sponsor is BannerSponsor {
   return sponsor.category === "light" || sponsor.category === "premium";
 }
 
-/** Weighted random pick: duplicate each candidate `weight` times into a flat
- * "ticket" pool, then draw uniformly — Premium's 3x weight (see
- * SPONSOR_DRAW_WEIGHT) means it fills 3 tickets per candidate against
- * Light's 1, without ever fully excluding Light from the draw. Only the
+/** Two-step draw: first the category — Premium with
+ * `settings.premiumProbability` %, Light otherwise (admin-configurable, see
+ * SponsorSettings) — then a uniformly random sponsor within it. Drawing the
+ * category first keeps the Premium/Light split at exactly the configured
+ * percentage no matter how many sponsors each category has. If only one
+ * category has candidates, it's used regardless of the percentage. Only the
  * rotating-banner categories (light/premium) participate — "fullpage" is a
  * separate placement entirely (see @/lib/fullPageSpots). */
-export function pickWeightedSponsor(candidates: BannerSponsor[]): BannerSponsor | null {
+export function pickBannerSponsor(
+  candidates: BannerSponsor[],
+  settings: SponsorSettings = DEFAULT_SPONSOR_SETTINGS,
+): BannerSponsor | null {
   if (candidates.length === 0) return null;
-  const tickets = candidates.flatMap((sponsor) => Array(sponsorDrawWeight(sponsor.category)).fill(sponsor));
-  return tickets[Math.floor(Math.random() * tickets.length)] as BannerSponsor;
+  const premium = candidates.filter((s) => s.category === "premium");
+  const light = candidates.filter((s) => s.category === "light");
+  const pool =
+    premium.length === 0 ? light : light.length === 0 ? premium : Math.random() * 100 < settings.premiumProbability ? premium : light;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 type Phase = "initial" | "resting" | "showing";
 
 /**
  * Drives the rotating banner slot: a silent delay right after the reader
- * opens (SPONSOR_INITIAL_DELAY_MS, so the very first thing a reader sees
+ * opens (settings.initialDelaySec, so the very first thing a reader sees
  * isn't an ad), then alternates between showing a weighted-random pick (for
  * that sponsor's own exposure time — Premium gets both better odds and more
- * time) and a quiet rest gap (SPONSOR_REST_MS) with nothing shown at all
- * between sponsors. See @/config/sponsors for why each number is what it is.
+ * time) and a quiet rest gap (settings.restSec) with nothing shown at all
+ * between sponsors. All timings come from the admin's SponsorSettings.
  *
  * Ticks every SPONSOR_TICK_MS instead of one long setTimeout per phase so
  * the whole thing can cleanly pause: while the tab is hidden (document.hidden
@@ -51,16 +54,21 @@ type Phase = "initial" | "resting" | "showing";
  * `current` is the only piece that needs to trigger a render, so it's the
  * only state.
  */
-export function useSponsorRotation(sponsors: Sponsor[]): Sponsor | null {
+export function useSponsorRotation(
+  sponsors: Sponsor[],
+  settings: SponsorSettings = DEFAULT_SPONSOR_SETTINGS,
+): Sponsor | null {
   const [current, setCurrent] = useState<BannerSponsor | null>(null);
 
   const sponsorsRef = useRef(sponsors);
+  const settingsRef = useRef(settings);
   useEffect(() => {
     sponsorsRef.current = sponsors;
-  }, [sponsors]);
+    settingsRef.current = settings;
+  }, [sponsors, settings]);
 
   const phaseRef = useRef<Phase>("initial");
-  const remainingRef = useRef(SPONSOR_INITIAL_DELAY_MS);
+  const remainingRef = useRef(settings.initialDelaySec * 1000);
   const currentRef = useRef<BannerSponsor | null>(null);
 
   useEffect(() => {
@@ -76,7 +84,7 @@ export function useSponsorRotation(sponsors: Sponsor[]): Sponsor | null {
         );
         if (!stillEligible) {
           phaseRef.current = "resting";
-          remainingRef.current = SPONSOR_REST_MS;
+          remainingRef.current = settingsRef.current.restSec * 1000;
           currentRef.current = null;
           setCurrent(null);
           return;
@@ -88,7 +96,7 @@ export function useSponsorRotation(sponsors: Sponsor[]): Sponsor | null {
 
       if (phaseRef.current === "showing") {
         phaseRef.current = "resting";
-        remainingRef.current = SPONSOR_REST_MS;
+        remainingRef.current = settingsRef.current.restSec * 1000;
         currentRef.current = null;
         setCurrent(null);
         return;
@@ -98,17 +106,18 @@ export function useSponsorRotation(sponsors: Sponsor[]): Sponsor | null {
       const eligible = sponsorsRef.current.filter(
         (s): s is BannerSponsor => isBannerSponsor(s) && s.status === "active",
       );
-      const picked = pickWeightedSponsor(eligible);
+      const picked = pickBannerSponsor(eligible, settingsRef.current);
       if (!picked) {
         // Nobody eligible right now — stay in "resting" and keep checking
         // every tick (e.g. the admin might activate one while this session
         // is open; `sponsors` is whatever the page passed in as a prop).
         phaseRef.current = "resting";
-        remainingRef.current = SPONSOR_REST_MS;
+        remainingRef.current = settingsRef.current.restSec * 1000;
         return;
       }
       phaseRef.current = "showing";
-      remainingRef.current = sponsorExposureMs(picked.category);
+      const { premiumExposureSec, lightExposureSec } = settingsRef.current;
+      remainingRef.current = (picked.category === "premium" ? premiumExposureSec : lightExposureSec) * 1000;
       currentRef.current = picked;
       setCurrent(picked);
     }, SPONSOR_TICK_MS);

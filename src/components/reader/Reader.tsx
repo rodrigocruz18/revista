@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { Magazine } from "@/types/magazine";
 import type { Sponsor } from "@/types/sponsor";
+import type { SponsorSettings } from "@/lib/sponsorSettings";
 import { getPdfDocumentManager } from "@/lib/pdf";
 import { Flipbook, type FlipbookGutter, type FlipbookHandle } from "@/components/flipbook/Flipbook";
 import { ZoomedPageView } from "@/components/flipbook/ZoomedPageView";
@@ -24,10 +25,12 @@ import { loadFullPageSpotLayout, saveFullPageSpotLayout } from "@/lib/sponsorFul
 export function Reader({
   edition,
   sponsors,
+  sponsorSettings,
 }: {
   edition: Magazine;
   allEditions: Magazine[];
   sponsors: Sponsor[];
+  sponsorSettings: SponsorSettings;
 }) {
   const manager = useMemo(() => getPdfDocumentManager(edition.url), [edition.url]);
 
@@ -53,7 +56,7 @@ export function Reader({
   // single rotation timer drives both the mobile (horizontal) and desktop
   // (vertical) banner slots below, so they always agree on which sponsor is
   // currently up instead of running on independent, possibly-drifting timers.
-  const currentBannerSponsor = useSponsorRotation(sponsors);
+  const currentBannerSponsor = useSponsorRotation(sponsors, sponsorSettings);
 
   // The book's own dead-space geometry (see Flipbook's onGutterChange doc
   // comment) — used to place the vertical banner precisely centered in the
@@ -103,13 +106,13 @@ export function Reader({
     spotsInitializedRef.current = true;
     const stored = loadFullPageSpotLayout(edition.slug);
     const restored = stored ? fromStoredSpots(stored, sponsors) : [];
-    const layout = restored.length > 0 ? restored : pickFullPageSpots(numPages, sponsors);
+    const layout = restored.length > 0 ? restored : pickFullPageSpots(numPages, sponsors, sponsorSettings);
     if (!stored || restored.length !== stored.length) saveFullPageSpotLayout(edition.slug, toStoredSpots(layout));
     // Synchronizing with `numPages` becoming known for this edition, not
     // something derivable during render (it also reads sessionStorage).
     setSpots(layout);
     setSpotsReady(true);
-  }, [numPages, sponsors, edition.slug]);
+  }, [numPages, sponsors, sponsorSettings, edition.slug]);
 
   // ---- Load document metadata + always open on page 1 (the cover). -----
   useEffect(() => {

@@ -1,5 +1,5 @@
 import type { Sponsor } from "@/types/sponsor";
-import { FULLPAGE_MIN_EDGE_PAGES, FULLPAGE_MIN_SPACING_PAGES } from "@/config/sponsors";
+import { DEFAULT_SPONSOR_SETTINGS, type SponsorSettings } from "@/lib/sponsorSettings";
 
 /**
  * A full-page sponsor placement fixed to a specific spot in this edition's
@@ -38,11 +38,16 @@ export function eligibleFullPageSponsors(sponsors: Sponsor[]): Sponsor[] {
  * and deterministic-shape (only Math.random is impure) so it's easy to
  * call once per edition-open and persist the result — see
  * sponsorFullPageStorage.ts. */
-export function pickFullPageSpots(numPages: number, sponsors: Sponsor[]): FullPageSpot[] {
+export function pickFullPageSpots(
+  numPages: number,
+  sponsors: Sponsor[],
+  settings: SponsorSettings = DEFAULT_SPONSOR_SETTINGS,
+): FullPageSpot[] {
   const eligible = eligibleFullPageSponsors(sponsors);
   if (eligible.length === 0) return [];
+  const maxSpots = settings.fullpageMaxPerEdition > 0 ? settings.fullpageMaxPerEdition : eligible.length;
 
-  const edge = FULLPAGE_MIN_EDGE_PAGES;
+  const edge = settings.fullpageEdgePages;
   const candidates: number[] = [];
   for (let p = edge; p <= numPages - edge; p += 2) candidates.push(p);
   if (candidates.length === 0) return [];
@@ -50,8 +55,8 @@ export function pickFullPageSpots(numPages: number, sponsors: Sponsor[]): FullPa
   const shuffledCandidates = shuffle(candidates);
   const chosen: number[] = [];
   for (const candidate of shuffledCandidates) {
-    if (chosen.length >= eligible.length) break;
-    if (chosen.every((existing) => Math.abs(existing - candidate) >= FULLPAGE_MIN_SPACING_PAGES)) {
+    if (chosen.length >= Math.min(eligible.length, maxSpots)) break;
+    if (chosen.every((existing) => Math.abs(existing - candidate) >= settings.fullpageSpacingPages)) {
       chosen.push(candidate);
     }
   }

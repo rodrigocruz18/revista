@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getAllEditions, getEditionBySlug } from "@/lib/magazines";
 import { getActiveSponsors } from "@/lib/sponsors";
+import { readSponsorSettings } from "@/lib/sponsorSettingsStore";
 import { Reader } from "@/components/reader/Reader";
 import { Preloader } from "@/components/ui/Preloader";
 
@@ -18,11 +19,11 @@ export default async function EditionPage({ params }: PageProps<"/revista/[editi
 
   if (!edition) notFound();
 
-  const sponsors = await getActiveSponsors();
+  const [sponsors, sponsorSettings] = await Promise.all([getActiveSponsors(), readSponsorSettings()]);
 
   return (
     <Suspense fallback={<Preloader editionLabel={edition.editionLabel} />}>
-      <Reader edition={edition} allEditions={allEditions} sponsors={sponsors} />
+      <Reader edition={edition} allEditions={allEditions} sponsors={sponsors} sponsorSettings={sponsorSettings} />
     </Suspense>
   );
 }
