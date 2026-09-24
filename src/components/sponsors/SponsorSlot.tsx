@@ -1,6 +1,7 @@
 "use client";
 
 import type { Sponsor } from "@/types/sponsor";
+import { cropImageStyle } from "@/lib/imageCrop";
 
 type Props = {
   /** The sponsor currently drawn by useSponsorRotation, or null during the
@@ -28,6 +29,7 @@ type Props = {
 export function SponsorSlot({ sponsor, variant, reduceMotion }: Props) {
   if (!sponsor) return null;
   const imageUrl = variant === "horizontal" ? sponsor.horizontalImageUrl : sponsor.verticalImageUrl;
+  const crop = variant === "horizontal" ? sponsor.horizontalCrop : sponsor.verticalCrop;
   if (!imageUrl) return null;
 
   return (
@@ -37,9 +39,17 @@ export function SponsorSlot({ sponsor, variant, reduceMotion }: Props) {
       rel="noopener noreferrer sponsored"
       aria-label={`Auspiciador: ${sponsor.name}`}
       className={`sponsor-slot h-full w-full rounded-xl ${reduceMotion ? "sponsor-slot--reduced" : ""}`}
+      style={crop?.bg ? { background: crop.bg } : undefined}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={imageUrl} alt={sponsor.name} className="h-full w-full object-cover" draggable={false} />
+      {/* The slot already has the banner's exact aspect ratio (see Reader),
+          so the admin's crop maps onto it directly. */}
+      {crop ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt={sponsor.name} style={cropImageStyle(crop)} draggable={false} />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt={sponsor.name} className="h-full w-full object-cover" draggable={false} />
+      )}
     </a>
   );
 }

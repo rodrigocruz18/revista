@@ -11,6 +11,8 @@ import {
 } from "@/config/sponsors";
 import type { Sponsor, SponsorCategory } from "@/types/sponsor";
 import { brandKey, sponsorDomain, uniqueBrands } from "@/lib/sponsorBrands";
+import { coverCrop, type ImageCrop } from "@/lib/imageCrop";
+import { ImageCropper } from "@/components/admin/ImageCropper";
 
 type Props = {
   initialSponsors: Sponsor[];
@@ -20,6 +22,11 @@ type Props = {
 type UploadStage = "idle" | "icon" | "horizontal" | "vertical" | "fullpage" | "saving" | "done";
 
 type PickedImage = { file: File; width: number; height: number };
+/** A banner picked for cropping: `src` is a local object URL for preview. */
+type PickedBanner = PickedImage & { src: string };
+
+const BANNER_TYPES = "image/png,image/jpeg,image/webp";
+const BANNER_MAX_BYTES = 10 * 1024 * 1024;
 
 const FULLPAGE_RATIO = SPONSOR_FULLPAGE_MIN_SIZE.width / SPONSOR_FULLPAGE_MIN_SIZE.height;
 const FULLPAGE_RATIO_TOLERANCE = 0.12; // +/-12% — real magazine pages vary a little, this isn't pixel-exact like the banners
@@ -80,8 +87,10 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   const [name, setName] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [category, setCategory] = useState<SponsorCategory>("light");
-  const [horizontal, setHorizontal] = useState<PickedImage | null>(null);
-  const [vertical, setVertical] = useState<PickedImage | null>(null);
+  const [horizontal, setHorizontal] = useState<PickedBanner | null>(null);
+  const [vertical, setVertical] = useState<PickedBanner | null>(null);
+  const [horizontalCrop, setHorizontalCrop] = useState<ImageCrop | null>(null);
+  const [verticalCrop, setVerticalCrop] = useState<ImageCrop | null>(null);
   const [fullPage, setFullPage] = useState<PickedImage | null>(null);
   const [icon, setIcon] = useState<PickedImage | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -120,24 +129,15 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           return;
         }
         setIcon({ file, width, height });
-      } else if (slot === "horizontal") {
-        const { width: w, height: h } = SPONSOR_IMAGE_SPECS.horizontal;
-        if (width !== w || height !== h) {
-          setImageError(`El banner horizontal debe medir exactamente ${w}x${h}px (esta imagen mide ${width}x${height}px).`);
-          setHorizontal(null);
+      } else if (slot === "horizontal" || slot === "vertical") {
+        if (file.size > BANNER_MAX_BYTES) {
+          setImageError("La imagen supera los 10 MB. Usa una version mas liviana (JPG o WebP).");
           event.target.value = "";
           return;
         }
-        setHorizontal({ file, width, height });
-      } else if (slot === "vertical") {
-        const { width: w, height: h } = SPONSOR_IMAGE_SPECS.vertical;
-        if (width !== w || height !== h) {
-          setImageError(`El banner vertical debe medir exactamente ${w}x${h}px (esta imagen mide ${width}x${height}px).`);
-          setVertical(null);
-          event.target.value = "";
-          return;
-        }
-        setVertical({ file, width, height });
+        // Any size is fine: the admin frames it in the cropper below.
+        const banner: PickedBanner = { file, width, height, src: URL.createObjectURL(file) };
+        pickBanner(slot, banner);
       } else {
         const { width: minW, height: minH } = SPONSOR_FULLPAGE_MIN_SIZE;
         const ratio = width / height;
@@ -155,6 +155,18 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
     } catch {
       setImageError("No se pudo leer la imagen seleccionada.");
       event.target.value = "";
+    }
+  }
+
+  function pickBanner(slot: "horizontal" | "vertical", banner: PickedBanner) {
+    const spec = SPONSOR_IMAGE_SPECS[slot];
+    const crop = coverCrop(banner.width, banner.height, spec.width / spec.height);
+    if (slot === "horizontal") {
+      setHorizontal(banner);
+      setHorizontalCrop(crop);
+    } else {
+      setVertical(banner);
+      setVerticalCrop(crop);
     }
   }
 
@@ -184,7 +196,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
         setError("Falta la imagen de pagina completa.");
         return;
       }
-    } else if (!horizontal || !vertical) {
+    } else if (!horizontal || !vertical || !horizontalCrop || !verticalCrop) {
       setError("Faltan las 2 imagenes (horizontal y vertical) — ambas son obligatorias para Light/Premium.");
       return;
     }
@@ -226,16 +238,21 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
         });
         horizontalUrl = hBlob.url;
 
-        setStage("vertical");
-        setProgress(0);
-        const vExt = vertical.file.name.split(".").pop()?.toLowerCase() || "jpg";
-        const vBlob = await upload(`sponsors/${id}/vertical.${vExt}`, vertical.file, {
-          access: "public",
-          handleUploadUrl: "/api/admin/upload",
-          contentType: vertical.file.type || undefined,
-          onUploadProgress: (p) => setProgress(p.percentage),
-        });
-        verticalUrl = vBlob.url;
+        if (vertical.file === horizontal.file) {
+          // Same original framed twice: upload it once, two crops.
+          verticalUrl = horizontalUrl;
+        } else {
+          setStage("vertical");
+          setProgress(0);
+          const vExt = vertical.file.name.split(".").pop()?.toLowerCase() || "jpg";
+          const vBlob = await upload(`sponsors/${id}/vertical.${vExt}`, vertical.file, {
+            access: "public",
+            handleUploadUrl: "/api/admin/upload",
+            contentType: vertical.file.type || undefined,
+            onUploadProgress: (p) => setProgress(p.percentage),
+          });
+          verticalUrl = vBlob.url;
+        }
       }
 
       setStage("saving");
@@ -249,6 +266,8 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           category,
           horizontalImageUrl: horizontalUrl,
           verticalImageUrl: verticalUrl,
+          horizontalCrop: horizontalUrl ? horizontalCrop : null,
+          verticalCrop: verticalUrl ? verticalCrop : null,
           fullPageImageUrl: fullPageUrl,
           iconUrl,
           brandOf: selectedBrand?.id,
@@ -266,6 +285,8 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       setCategory("light");
       setHorizontal(null);
       setVertical(null);
+      setHorizontalCrop(null);
+      setVerticalCrop(null);
       setFullPage(null);
       setIcon(null);
       setBrandOf("");
@@ -358,7 +379,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
     <section className="mt-10 border-t border-white/10 pt-10">
       <h2 className="mb-1 font-serif text-xl text-white">Auspiciadores</h2>
       <p className="mb-4 text-sm text-white/50">
-        Rotan en un banner junto a la revista. Light y Premium requieren 2 imagenes exactas; Premium
+        Rotan en un banner junto a la revista. Light y Premium requieren 2 imagenes (de cualquier tamaño: eliges el encuadre al subirlas); Premium
         aparece con mayor frecuencia y mas tiempo en pantalla. Pagina completa simula una hoja extra de
         la revista al pasar de pagina (una sola imagen, sin medida exacta pero con proporcion vertical
         similar a una pagina).
@@ -490,34 +511,65 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
             {fullPage && <p className="mt-1 text-xs text-emerald-400">Lista: {fullPage.width}x{fullPage.height}px</p>}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-8">
             <div>
               <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-horizontal">
-                Banner horizontal * (exacto {SPONSOR_IMAGE_SPECS.horizontal.width}x{SPONSOR_IMAGE_SPECS.horizontal.height}px)
+                Banner horizontal * (cualquier tamaño — se encuadra en formato {SPONSOR_IMAGE_SPECS.horizontal.width}x
+                {SPONSOR_IMAGE_SPECS.horizontal.height})
               </label>
               <input
                 id="sponsor-horizontal"
                 type="file"
-                accept="image/*"
+                accept={BANNER_TYPES}
                 onChange={(e) => handlePickImage(e, "horizontal")}
                 className="w-full text-sm text-white/80 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-white file:transition hover:file:bg-white/20"
               />
-              {horizontal && <p className="mt-1 text-xs text-emerald-400">Lista: {horizontal.width}x{horizontal.height}px</p>}
-              <p className="mt-1 text-[11px] text-white/40">Se muestra debajo de la revista en pantallas moviles.</p>
+              <p className="mb-3 mt-1 text-[11px] text-white/40">Se muestra debajo de la revista en pantallas moviles.</p>
+              {horizontal && (
+                <ImageCropper
+                  key={horizontal.src}
+                  src={horizontal.src}
+                  imageWidth={horizontal.width}
+                  imageHeight={horizontal.height}
+                  target={SPONSOR_IMAGE_SPECS.horizontal}
+                  frameClassName="w-full max-w-xl"
+                  onChange={setHorizontalCrop}
+                />
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs text-white/60" htmlFor="sponsor-vertical">
-                Banner vertical * (exacto {SPONSOR_IMAGE_SPECS.vertical.width}x{SPONSOR_IMAGE_SPECS.vertical.height}px)
+                Banner vertical * (cualquier tamaño — se encuadra en formato {SPONSOR_IMAGE_SPECS.vertical.width}x
+                {SPONSOR_IMAGE_SPECS.vertical.height})
               </label>
               <input
                 id="sponsor-vertical"
                 type="file"
-                accept="image/*"
+                accept={BANNER_TYPES}
                 onChange={(e) => handlePickImage(e, "vertical")}
                 className="w-full text-sm text-white/80 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-white file:transition hover:file:bg-white/20"
               />
-              {vertical && <p className="mt-1 text-xs text-emerald-400">Lista: {vertical.width}x{vertical.height}px</p>}
-              <p className="mt-1 text-[11px] text-white/40">Se muestra a la izquierda de la revista en pantallas de escritorio.</p>
+              {horizontal && vertical?.file !== horizontal.file && (
+                <button
+                  type="button"
+                  onClick={() => pickBanner("vertical", horizontal)}
+                  className="mt-2 text-xs text-lime-300/90 underline-offset-2 hover:underline"
+                >
+                  Usar la misma imagen del banner horizontal
+                </button>
+              )}
+              <p className="mb-3 mt-1 text-[11px] text-white/40">Se muestra a la izquierda de la revista en escritorio.</p>
+              {vertical && (
+                <ImageCropper
+                  key={`${vertical.src}-vertical`}
+                  src={vertical.src}
+                  imageWidth={vertical.width}
+                  imageHeight={vertical.height}
+                  target={SPONSOR_IMAGE_SPECS.vertical}
+                  frameClassName="h-80"
+                  onChange={setVerticalCrop}
+                />
+              )}
             </div>
           </div>
         )}

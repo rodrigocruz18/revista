@@ -15,6 +15,8 @@
  * a "light"/"premium" sponsor has horizontalImageUrl/verticalImageUrl, a
  * "fullpage" sponsor has fullPageImageUrl, the other fields stay null.
  */
+import type { ImageCrop } from "@/lib/imageCrop";
+
 export type SponsorCategory = "light" | "premium" | "fullpage";
 export type SponsorStatus = "active" | "paused";
 
@@ -27,10 +29,17 @@ export type Sponsor = {
   targetUrl: string;
   category: SponsorCategory;
   status: SponsorStatus;
-  /** 640x200px — shown below the magazine on narrow (mobile) screens. */
+  /** Any size; framed into the 640x200 slot shown below the magazine on
+   * narrow (mobile) screens via `horizontalCrop`. */
   horizontalImageUrl: string | null;
-  /** 600x1200px — shown beside the magazine on wide (desktop) screens. */
+  /** Any size; framed into the 600x1200 slot shown beside the magazine on
+   * wide (desktop) screens via `verticalCrop`. */
   verticalImageUrl: string | null;
+  /** Which part of the original banner image fills its slot (chosen in the
+   * admin cropper). Absent on banners uploaded at the exact size before the
+   * cropper existed — those are shown centered with object-fit: cover. */
+  horizontalCrop?: ImageCrop | null;
+  verticalCrop?: ImageCrop | null;
   /** Full simulated magazine page — desktop and mobile both use this one
    * image, sized to the page's own aspect ratio with a slight center-crop. */
   fullPageImageUrl: string | null;

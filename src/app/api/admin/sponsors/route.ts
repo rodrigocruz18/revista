@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/adminAuth";
 import { readSponsorsManifest, writeSponsorsManifest } from "@/lib/sponsorsManifest";
 import { brandKey } from "@/lib/sponsorBrands";
+import { parseCrop } from "@/lib/imageCrop";
 import type { Sponsor, SponsorCategory } from "@/types/sponsor";
 
 type UpsertBody = {
@@ -11,6 +12,8 @@ type UpsertBody = {
   category?: unknown;
   horizontalImageUrl?: unknown;
   verticalImageUrl?: unknown;
+  horizontalCrop?: unknown;
+  verticalCrop?: unknown;
   fullPageImageUrl?: unknown;
   iconUrl?: unknown;
   /** Id of an existing sponsor record: the new placement joins that brand. */
@@ -59,6 +62,8 @@ export async function POST(request: NextRequest) {
   const horizontalImageUrl = typeof body.horizontalImageUrl === "string" && body.horizontalImageUrl ? body.horizontalImageUrl : null;
   const verticalImageUrl = typeof body.verticalImageUrl === "string" && body.verticalImageUrl ? body.verticalImageUrl : null;
   const fullPageImageUrl = typeof body.fullPageImageUrl === "string" && body.fullPageImageUrl ? body.fullPageImageUrl : null;
+  const horizontalCrop = parseCrop(body.horizontalCrop);
+  const verticalCrop = parseCrop(body.verticalCrop);
   let name = typeof body.name === "string" ? body.name.trim() : "";
   let targetUrl = typeof body.targetUrl === "string" ? body.targetUrl.trim() : "";
   let iconUrl = typeof body.iconUrl === "string" && body.iconUrl ? body.iconUrl : null;
@@ -123,6 +128,8 @@ export async function POST(request: NextRequest) {
       status: existing?.status ?? "active",
       horizontalImageUrl: category === "fullpage" ? null : horizontalImageUrl,
       verticalImageUrl: category === "fullpage" ? null : verticalImageUrl,
+      horizontalCrop: category === "fullpage" ? null : horizontalCrop,
+      verticalCrop: category === "fullpage" ? null : verticalCrop,
       fullPageImageUrl: category === "fullpage" ? fullPageImageUrl : null,
       iconUrl: iconUrl ?? existing?.iconUrl ?? null,
       brandId,

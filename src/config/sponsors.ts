@@ -48,10 +48,11 @@ export const SPONSOR_TICK_MS = 500;
 export const FULLPAGE_MIN_EDGE_PAGES = 4;
 export const FULLPAGE_MIN_SPACING_PAGES = 4;
 
-/** Exact pixel dimensions required for the two rotating-banner images.
- * Double the common 320x100 / 300x600 ad-slot sizes so they stay crisp on
- * high-density (retina) screens; enforced exactly (see admin upload form),
- * per the requirement that these match our format precisely. */
+/** Standard frame for the two rotating-banner slots: the aspect ratio every
+ * banner is shown at, and the recommended resolution (double the common
+ * 320x100 / 300x600 ad-slot sizes, for retina screens). Uploads can be any
+ * size — the admin frames them into this ratio with the cropper, and the
+ * original file is stored untouched (see @/lib/imageCrop). */
 export const SPONSOR_IMAGE_SPECS = {
   horizontal: { width: 640, height: 200 },
   vertical: { width: 600, height: 1200 },
