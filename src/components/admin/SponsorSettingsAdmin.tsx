@@ -7,9 +7,15 @@ import {
   SPONSOR_SETTINGS_LIMITS,
   type SponsorSettings,
 } from "@/lib/sponsorSettings";
+import type { Sponsor } from "@/types/sponsor";
+import { buildSponsorCycle, seededRandom } from "@/lib/sponsorCycle";
+import { brandKey } from "@/lib/sponsorBrands";
+import { cn } from "@/lib/utils";
 
 type Props = {
   initialSettings: SponsorSettings;
+  /** For the tape preview: the real active banner sponsors. */
+  sponsors: Sponsor[];
   blobConfigured: boolean;
 };
 
@@ -20,6 +26,12 @@ const BANNER_FIELDS: Field[] = [
   { key: "restSec", label: "Descanso entre auspiciadores", hint: "Tiempo sin banner entre uno y el siguiente.", unit: "seg" },
   { key: "lightExposureSec", label: "Exposicion Light", hint: "Cuanto tiempo queda visible un auspiciador Light.", unit: "seg" },
   { key: "premiumExposureSec", label: "Exposicion Premium", hint: "Cuanto tiempo queda visible un auspiciador Premium.", unit: "seg" },
+  {
+    key: "premiumRepeats",
+    label: "Apariciones Premium por vuelta",
+    hint: "Cada Light aparece 1 vez por vuelta; cada Premium, esta cantidad.",
+    unit: "veces",
+  },
 ];
 
 const FULLPAGE_FIELDS: Field[] = [
@@ -29,14 +41,13 @@ const FULLPAGE_FIELDS: Field[] = [
 ];
 
 const PREVIEW_SECONDS = 180;
-const SUMMARY_SECONDS = 300;
 
 /**
  * Admin form for the reader's sponsor timing and placement (SponsorSettings).
  * Values are clamped to SPONSOR_SETTINGS_LIMITS both here and on the server;
  * a saved change applies to readers on their next page load.
  */
-export function SponsorSettingsAdmin({ initialSettings, blobConfigured }: Props) {
+export function SponsorSettingsAdmin({ initialSettings, sponsors, blobConfigured }: Props) {
   const [saved, setSaved] = useState(initialSettings);
   const [draft, setDraft] = useState<Record<keyof SponsorSettings, string>>(() => toDraft(initialSettings));
   const [saving, setSaving] = useState(false);
@@ -109,13 +120,14 @@ export function SponsorSettingsAdmin({ initialSettings, blobConfigured }: Props)
         <div>
           <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/50">Banners rotativos</h3>
           <div className="grid gap-5 sm:grid-cols-2">{BANNER_FIELDS.map(renderField)}</div>
-          <ProbabilityField
-            value={settings.premiumProbability}
-            onChange={(value) => setDraft((prev) => ({ ...prev, premiumProbability: String(value) }))}
-          />
+          <p className="mt-4 text-[11px] leading-relaxed text-white/40">
+            Los banners forman una cinta: al abrir la revista se arma un orden aleatorio y se recorren todos antes de
+            repetir. Cada vuelta nueva se vuelve a mezclar, nunca empieza con el ultimo que se mostro y no pone al mismo
+            auspiciador dos veces seguidas.
+          </p>
         </div>
 
-        <BannerTimeline settings={settings} />
+        <BannerTape settings={settings} sponsors={sponsors} />
 
         <div className="border-t border-white/10 pt-6">
           <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/50">Pagina completa</h3>
@@ -158,35 +170,46 @@ export function SponsorSettingsAdmin({ initialSettings, blobConfigured }: Props)
   );
 }
 
-/**
- * What a reader sees during the first minutes, given these settings: the
- * initial silence, then banners alternating with rests. Assumes both
- * categories have active sponsors, split by the configured probability.
- */
-function BannerTimeline({ settings }: { settings: SponsorSettings }) {
-  const { initialDelaySec, restSec, lightExposureSec, premiumExposureSec, premiumProbability } = settings;
-  const premiumShare = premiumProbability / 100;
-  const avgExposure = premiumShare * premiumExposureSec + (1 - premiumShare) * lightExposureSec;
-  const cycle = avgExposure + restSec;
-  const appearances =
-    SUMMARY_SECONDS <= initialDelaySec ? 0 : Math.ceil((SUMMARY_SECONDS - initialDelaySec) / cycle);
-  const bannerTimeShare = Math.min(1, (appearances * avgExposure) / SUMMARY_SECONDS);
+type TapeSponsor = Pick<Sponsor, "id" | "name" | "targetUrl" | "category" | "brandId">;
 
-  // Deterministic sequence following the probability (e.g. 75% → P P L P ...).
-  const segments: { kind: "initial" | "rest" | "light" | "premium"; seconds: number }[] = [];
+/** Stand-ins for the preview when no banner sponsor is active yet. */
+const EXAMPLE_SPONSORS: TapeSponsor[] = [
+  { id: "ej-a", name: "Auspiciador A", targetUrl: "https://a.example", category: "premium" },
+  { id: "ej-b", name: "Auspiciador B", targetUrl: "https://b.example", category: "light" },
+  { id: "ej-c", name: "Auspiciador C", targetUrl: "https://c.example", category: "light" },
+  { id: "ej-d", name: "Auspiciador D", targetUrl: "https://d.example", category: "light" },
+];
+
+/**
+ * Preview of the banner tape with the admin's real active sponsors (or
+ * examples): two cycles as the reader would get them — same algorithm as
+ * the reader (@/lib/sponsorCycle), with a fixed seed so it doesn't reshuffle
+ * on every keystroke — plus the first 3 minutes as a timeline.
+ */
+function BannerTape({ settings, sponsors }: { settings: SponsorSettings; sponsors: Sponsor[] }) {
+  const { initialDelaySec, restSec, lightExposureSec, premiumExposureSec, premiumRepeats } = settings;
+  const active = sponsors.filter((s) => (s.category === "light" || s.category === "premium") && s.status === "active");
+  const usingExamples = active.length === 0;
+  const pool = (usingExamples ? EXAMPLE_SPONSORS : active) as Sponsor[];
+
+  const random = seededRandom(7);
+  const first = buildSponsorCycle(pool, premiumRepeats, null, random);
+  const second = buildSponsorCycle(pool, premiumRepeats, first.length ? brandKey(first[first.length - 1]) : null, random);
+  const exposure = (s: Sponsor) => (s.category === "premium" ? premiumExposureSec : lightExposureSec);
+  const cycleSeconds = first.reduce((sum, s) => sum + exposure(s) + restSec, 0);
+
+  const segments: { kind: "initial" | "rest" | "light" | "premium"; seconds: number; label?: string }[] = [];
   let t = 0;
-  const push = (kind: (typeof segments)[number]["kind"], seconds: number) => {
-    const s = Math.min(seconds, PREVIEW_SECONDS - t);
-    if (s > 0) segments.push({ kind, seconds: s });
-    t += s;
+  const push = (kind: (typeof segments)[number]["kind"], seconds: number, label?: string) => {
+    const len = Math.min(seconds, PREVIEW_SECONDS - t);
+    if (len > 0) segments.push({ kind, seconds: len, label });
+    t += len;
   };
   push("initial", initialDelaySec);
-  let credit = 0;
-  while (t < PREVIEW_SECONDS && segments.length < 200) {
-    credit += premiumShare;
-    const premium = credit >= 0.5;
-    if (premium) credit -= 1;
-    push(premium ? "premium" : "light", premium ? premiumExposureSec : lightExposureSec);
+  const timelineTape = [...first, ...second];
+  for (let i = 0; t < PREVIEW_SECONDS && i < 400; i++) {
+    const sponsor = timelineTape[i % timelineTape.length];
+    push(sponsor.category === "premium" ? "premium" : "light", exposure(sponsor), sponsor.name);
     push("rest", restSec);
   }
 
@@ -198,73 +221,78 @@ function BannerTimeline({ settings }: { settings: SponsorSettings }) {
   };
 
   return (
-    <div className="rounded-xl bg-black/20 p-4">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-xs font-medium text-white/70">Asi se ve en los primeros 3 minutos de lectura</p>
-        <p className="text-[11px] text-white/45">
-          En 5 min: ~{appearances} {appearances === 1 ? "aparicion" : "apariciones"} · banner visible ~
-          {Math.round(bannerTimeShare * 100)}% del tiempo
-        </p>
+    <div className="space-y-4 rounded-xl bg-black/20 p-4">
+      <div>
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-xs font-medium text-white/70">
+            Cinta publicitaria {usingExamples ? "(ejemplo: aun no hay banners activos)" : "con los auspiciadores activos"}
+          </p>
+          <p className="text-[11px] text-white/45">
+            {first.length} apariciones por vuelta · una vuelta dura ~{formatDuration(cycleSeconds)}
+          </p>
+        </div>
+        <ol className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          {first.map((sponsor, i) => (
+            <TapeChip key={`a-${i}`} sponsor={sponsor} />
+          ))}
+          <li className="px-1 text-white/35" aria-label="Nueva vuelta, nuevo orden">
+            ↻
+          </li>
+          {second.map((sponsor, i) => (
+            <TapeChip key={`b-${i}`} sponsor={sponsor} dim />
+          ))}
+        </ol>
       </div>
-      <div className="flex h-3 overflow-hidden rounded-full ring-1 ring-white/10" aria-hidden>
-        {segments.map((segment, i) => (
-          <div
-            key={i}
-            className={color[segment.kind]}
-            style={{ width: `${(segment.seconds / PREVIEW_SECONDS) * 100}%` }}
-            title={`${segment.kind} ${segment.seconds}s`}
-          />
-        ))}
-      </div>
-      <div className="mt-1.5 flex justify-between text-[10px] tabular-nums text-white/30">
-        <span>0:00</span>
-        <span>1:00</span>
-        <span>2:00</span>
-        <span>3:00</span>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-white/50">
-        <Legend className="bg-white/[0.12]" label="Sin publicidad" />
-        <Legend className="bg-lime-300" label="Premium" />
-        <Legend className="bg-lime-300/45" label="Light" />
-        <Legend className="ring-1 ring-white/20" label="Descanso" />
+
+      <div>
+        <p className="mb-2 text-xs font-medium text-white/70">Primeros 3 minutos de lectura</p>
+        <div className="flex h-3 overflow-hidden rounded-full ring-1 ring-white/10" aria-hidden>
+          {segments.map((segment, i) => (
+            <div
+              key={i}
+              className={color[segment.kind]}
+              style={{ width: `${(segment.seconds / PREVIEW_SECONDS) * 100}%` }}
+              title={segment.label ? `${segment.label} · ${segment.seconds}s` : `${segment.seconds}s`}
+            />
+          ))}
+        </div>
+        <div className="mt-1.5 flex justify-between text-[10px] tabular-nums text-white/30">
+          <span>0:00</span>
+          <span>1:00</span>
+          <span>2:00</span>
+          <span>3:00</span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-white/50">
+          <Legend className="bg-white/[0.12]" label="Sin publicidad" />
+          <Legend className="bg-lime-300" label="Premium" />
+          <Legend className="bg-lime-300/45" label="Light" />
+          <Legend className="ring-1 ring-white/20" label="Descanso" />
+        </div>
       </div>
     </div>
   );
 }
 
-/** Premium/Light split as one slider: the two always add up to 100%. */
-function ProbabilityField({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+function TapeChip({ sponsor, dim = false }: { sponsor: Sponsor; dim?: boolean }) {
+  const premium = sponsor.category === "premium";
   return (
-    <div className="mt-5">
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <label htmlFor="setting-premiumProbability" className="text-xs text-white/60">
-          Probabilidad de aparicion por categoria
-        </label>
-        <span className="text-xs tabular-nums text-white/70">
-          Premium <strong className="text-lime-300">{value}%</strong> · Light{" "}
-          <strong className="text-lime-300/70">{100 - value}%</strong>
-        </span>
-      </div>
-      <input
-        id="setting-premiumProbability"
-        type="range"
-        min={0}
-        max={100}
-        step={5}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-lime-300"
-      />
-      <div className="mt-1 flex h-1.5 overflow-hidden rounded-full" aria-hidden>
-        <div className="bg-lime-300 transition-all" style={{ width: `${value}%` }} />
-        <div className="bg-lime-300/35 transition-all" style={{ width: `${100 - value}%` }} />
-      </div>
-      <p className="mt-2 text-[11px] text-white/40">
-        Cada vez que aparece un banner, se sortea primero la categoria con este porcentaje y luego un auspiciador al
-        azar dentro de ella. Si una categoria no tiene auspiciadores activos, se usa la otra.
-      </p>
-    </div>
+    <li
+      className={cn(
+        "max-w-[11rem] truncate rounded-full px-2.5 py-1",
+        premium ? "bg-lime-300 font-medium text-black" : "bg-white/10 text-white/75",
+        dim && "opacity-45",
+      )}
+      title={`${sponsor.name} · ${premium ? "Premium" : "Light"}`}
+    >
+      {sponsor.name}
+    </li>
   );
+}
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return m > 0 ? `${m} min ${s > 0 ? `${s} s` : ""}`.trim() : `${s} s`;
 }
 
 function Legend({ className, label }: { className: string; label: string }) {

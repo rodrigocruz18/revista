@@ -16,11 +16,9 @@ export type SponsorSettings = {
   /** How long a drawn sponsor stays on screen, per category. */
   lightExposureSec: number;
   premiumExposureSec: number;
-  /** Chance (%) that a banner draw goes to the Premium category; Light
-   * gets the rest. Applies when both categories have active sponsors —
-   * otherwise whichever category has sponsors is used. Within a category
-   * every sponsor is equally likely. */
-  premiumProbability: number;
+  /** Times each Premium sponsor appears per cycle of the banner tape (Light
+   * appears once) — see @/lib/sponsorCycle. */
+  premiumRepeats: number;
   /** Full-page ads: real pages kept ad-free at the start and end of an edition. */
   fullpageEdgePages: number;
   /** Full-page ads: minimum pages between two of them. */
@@ -34,7 +32,7 @@ export const DEFAULT_SPONSOR_SETTINGS: SponsorSettings = {
   restSec: 8,
   lightExposureSec: 15,
   premiumExposureSec: 40,
-  premiumProbability: 75,
+  premiumRepeats: 2,
   fullpageEdgePages: 4,
   fullpageSpacingPages: 4,
   fullpageMaxPerEdition: 0,
@@ -46,7 +44,7 @@ export const SPONSOR_SETTINGS_LIMITS: Record<keyof SponsorSettings, { min: numbe
   restSec: { min: 0, max: 600 },
   lightExposureSec: { min: 3, max: 600 },
   premiumExposureSec: { min: 3, max: 600 },
-  premiumProbability: { min: 0, max: 100 },
+  premiumRepeats: { min: 1, max: 5 },
   fullpageEdgePages: { min: 0, max: 40 },
   fullpageSpacingPages: { min: 2, max: 40 },
   fullpageMaxPerEdition: { min: 0, max: 20 },

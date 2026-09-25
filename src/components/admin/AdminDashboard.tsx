@@ -320,7 +320,11 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
         </section>
 
         <SponsorsAdmin initialSponsors={initialSponsors} blobConfigured={blobConfigured} />
-        <SponsorSettingsAdmin initialSettings={initialSponsorSettings} blobConfigured={blobConfigured} />
+        <SponsorSettingsAdmin
+          initialSettings={initialSponsorSettings}
+          sponsors={initialSponsors}
+          blobConfigured={blobConfigured}
+        />
       </div>
     </main>
   );

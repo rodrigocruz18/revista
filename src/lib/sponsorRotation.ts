@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Sponsor } from "@/types/sponsor";
 import { SPONSOR_TICK_MS } from "@/config/sponsors";
 import { DEFAULT_SPONSOR_SETTINGS, type SponsorSettings } from "@/lib/sponsorSettings";
+import { buildSponsorCycle } from "@/lib/sponsorCycle";
+import { brandKey } from "@/lib/sponsorBrands";
 
 type RotationCategory = "light" | "premium";
 export type BannerSponsor = Sponsor & { category: RotationCategory };
@@ -12,35 +14,19 @@ function isBannerSponsor(sponsor: Sponsor): sponsor is BannerSponsor {
   return sponsor.category === "light" || sponsor.category === "premium";
 }
 
-/** Two-step draw: first the category — Premium with
- * `settings.premiumProbability` %, Light otherwise (admin-configurable, see
- * SponsorSettings) — then a uniformly random sponsor within it. Drawing the
- * category first keeps the Premium/Light split at exactly the configured
- * percentage no matter how many sponsors each category has. If only one
- * category has candidates, it's used regardless of the percentage. Only the
- * rotating-banner categories (light/premium) participate — "fullpage" is a
- * separate placement entirely (see @/lib/fullPageSpots). */
-export function pickBannerSponsor(
-  candidates: BannerSponsor[],
-  settings: SponsorSettings = DEFAULT_SPONSOR_SETTINGS,
-): BannerSponsor | null {
-  if (candidates.length === 0) return null;
-  const premium = candidates.filter((s) => s.category === "premium");
-  const light = candidates.filter((s) => s.category === "light");
-  const pool =
-    premium.length === 0 ? light : light.length === 0 ? premium : Math.random() * 100 < settings.premiumProbability ? premium : light;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
 type Phase = "initial" | "resting" | "showing";
 
 /**
  * Drives the rotating banner slot: a silent delay right after the reader
  * opens (settings.initialDelaySec, so the very first thing a reader sees
- * isn't an ad), then alternates between showing a weighted-random pick (for
- * that sponsor's own exposure time — Premium gets both better odds and more
- * time) and a quiet rest gap (settings.restSec) with nothing shown at all
- * between sponsors. All timings come from the admin's SponsorSettings.
+ * isn't an ad), then alternates between showing the next sponsor of the
+ * banner tape (for its category's exposure time) and a quiet rest gap
+ * (settings.restSec) with nothing shown between sponsors.
+ *
+ * The tape (see @/lib/sponsorCycle) goes through every eligible sponsor in
+ * random order before repeating — Premium ones `premiumRepeats` times per
+ * cycle — and the next cycle is reshuffled so its first sponsor is never the
+ * one just shown.
  *
  * Ticks every SPONSOR_TICK_MS instead of one long setTimeout per phase so
  * the whole thing can cleanly pause: while the tab is hidden (document.hidden
@@ -48,11 +34,11 @@ type Phase = "initial" | "resting" | "showing";
  * tabs away mid-exposure comes back to the same remaining time rather than a
  * rotation that silently burned through while they weren't looking.
  *
- * Phase/remaining-time bookkeeping lives in refs, not state — the interval
- * callback is created once and reads/writes them directly, so a tick never
- * has to worry about a stale closure over a state value from N renders ago.
- * `current` is the only piece that needs to trigger a render, so it's the
- * only state.
+ * Phase/remaining-time/tape bookkeeping lives in refs, not state — the
+ * interval callback is created once and reads/writes them directly, so a
+ * tick never has to worry about a stale closure over a state value from N
+ * renders ago. `current` is the only piece that needs to trigger a render,
+ * so it's the only state.
  */
 export function useSponsorRotation(
   sponsors: Sponsor[],
@@ -70,6 +56,8 @@ export function useSponsorRotation(
   const phaseRef = useRef<Phase>("initial");
   const remainingRef = useRef(settings.initialDelaySec * 1000);
   const currentRef = useRef<BannerSponsor | null>(null);
+  const tapeRef = useRef<BannerSponsor[]>([]);
+  const lastKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -106,7 +94,19 @@ export function useSponsorRotation(
       const eligible = sponsorsRef.current.filter(
         (s): s is BannerSponsor => isBannerSponsor(s) && s.status === "active",
       );
-      const picked = pickBannerSponsor(eligible, settingsRef.current);
+      // Next in the tape, skipping anyone paused/removed since the cycle was
+      // built; an exhausted tape starts a fresh shuffled cycle whose first
+      // sponsor differs from the last one shown.
+      const eligibleIds = new Set(eligible.map((s) => s.id));
+      let picked: BannerSponsor | null = null;
+      while (!picked && tapeRef.current.length > 0) {
+        const next = tapeRef.current.shift()!;
+        if (eligibleIds.has(next.id)) picked = eligible.find((s) => s.id === next.id) ?? null;
+      }
+      if (!picked && eligible.length > 0) {
+        tapeRef.current = buildSponsorCycle(eligible, settingsRef.current.premiumRepeats, lastKeyRef.current);
+        picked = tapeRef.current.shift() ?? null;
+      }
       if (!picked) {
         // Nobody eligible right now — stay in "resting" and keep checking
         // every tick (e.g. the admin might activate one while this session
@@ -115,6 +115,7 @@ export function useSponsorRotation(
         remainingRef.current = settingsRef.current.restSec * 1000;
         return;
       }
+      lastKeyRef.current = brandKey(picked);
       phaseRef.current = "showing";
       const { premiumExposureSec, lightExposureSec } = settingsRef.current;
       remainingRef.current = (picked.category === "premium" ? premiumExposureSec : lightExposureSec) * 1000;
