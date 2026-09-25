@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { del } from "@vercel/blob";
 import { isAuthenticated } from "@/lib/adminAuth";
 import { normalizeEditions, loadManifestEditions, writeManifestEditions } from "@/lib/blobManifest";
 import { MONTHS_ES } from "@/config/magazine";
@@ -64,8 +65,15 @@ export async function POST(request: NextRequest) {
       isCurrent: false,
       coverUrl,
     };
+    const previous = editions.find((e) => e.slug === slug);
     const merged = normalizeEditions([...editions.filter((e) => e.slug !== slug), upserted]);
     await writeManifestEditions(merged);
+    // Replacing an edition: uploads get unique names now, so the files it
+    // no longer points to would otherwise stay in the store forever.
+    const replaced = [previous?.url, previous?.coverUrl].filter(
+      (url): url is string => Boolean(url) && url !== pdfUrl && url !== coverUrl && url!.startsWith("https://"),
+    );
+    if (replaced.length > 0) await Promise.allSettled(replaced.map((url) => del(url)));
     return NextResponse.json({ ok: true, editions: merged });
   } catch (err) {
     console.error("[admin/editions POST]", err);

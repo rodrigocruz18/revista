@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Magazine } from "@/types/magazine";
-import { getPdfDocumentManager } from "@/lib/pdf";
+import { renderPdfCover } from "@/lib/pdfCover";
 
 // A thumbnail-sized render is plenty for a card a few hundred pixels wide —
 // no need to rasterize at reading resolution just to show a cover.
-const THUMBNAIL_SCALE = 0.5;
+const THUMBNAIL_WIDTH = 480;
 
 /**
  * Renders each edition's actual cover — page 1 of its PDF — instead of a
@@ -17,12 +17,11 @@ const THUMBNAIL_SCALE = 0.5;
  * A manually-provided cover (`/public/magazines/covers/<slug>.jpg`, wired up
  * in scripts/generate-magazine-manifest.ts) always wins when present — it's
  * cheaper to load and lets someone swap in a nicer crop later. Otherwise the
- * cover is rendered client-side from the PDF itself, on demand: an
- * IntersectionObserver defers the (real, if modest) cost of opening and
- * rasterizing a PDF until the card actually scrolls into view, so an archive
- * with many editions doesn't try to open every PDF at once on page load.
- * This reuses the same `PdfDocumentManager` the reader itself uses, so
- * opening that edition afterwards doesn't re-fetch the file.
+ * cover is rendered client-side from the PDF itself, on demand (only the
+ * byte ranges page 1 needs, cached in the browser afterwards — see
+ * @/lib/pdfCover): an IntersectionObserver defers that cost until the card
+ * actually scrolls into view. Editions published from /admin get a stored
+ * cover image at publish time, so this fallback is the exception.
  */
 export function MagazineCard({ edition }: { edition: Magazine }) {
   const cardRef = useRef<HTMLAnchorElement>(null);
@@ -39,11 +38,9 @@ export function MagazineCard({ edition }: { edition: Magazine }) {
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         observer.disconnect();
-        getPdfDocumentManager(edition.url)
-          .renderPage(1, THUMBNAIL_SCALE)
-          .then((result) => {
-            if (cancelled) return;
-            setRenderedCover(result.canvas.toDataURL("image/jpeg", 0.82));
+        renderPdfCover(edition.url, THUMBNAIL_WIDTH)
+          .then((cover) => {
+            if (!cancelled) setRenderedCover(cover.src);
           })
           .catch(() => {
             if (!cancelled) setFailed(true);
@@ -72,6 +69,7 @@ export function MagazineCard({ edition }: { edition: Magazine }) {
           <img
             src={coverSrc}
             alt={`Portada ${edition.editionLabel}`}
+            decoding="async"
             className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
           />
         ) : failed ? (

@@ -175,7 +175,13 @@ export function EditionsWidget({ editions, siteUrl }: { editions: Magazine[]; si
                     <span className="ew-face">
                       {cover && cover !== "error" ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={cover.src} alt={`Portada ${edition.editionLabel}`} draggable={false} />
+                        <img
+                          src={cover.src}
+                          alt={`Portada ${edition.editionLabel}`}
+                          draggable={false}
+                          decoding="async"
+                          fetchPriority={index === 0 ? "high" : "low"}
+                        />
                       ) : cover === "error" ? (
                         <span className="ew-fallback">
                           {/* eslint-disable-next-line @next/next/no-img-element */}

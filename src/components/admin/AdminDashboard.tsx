@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
 import { MONTHS_ES } from "@/config/magazine";
@@ -9,6 +9,7 @@ import type { Sponsor } from "@/types/sponsor";
 import { SponsorsAdmin } from "@/components/admin/SponsorsAdmin";
 import { SponsorSettingsAdmin } from "@/components/admin/SponsorSettingsAdmin";
 import type { SponsorSettings } from "@/lib/sponsorSettings";
+import { COVER_IMAGE_WIDTH, renderPdfCoverBlob } from "@/lib/pdfCover";
 
 type Props = {
   initialEditions: Magazine[];
@@ -17,9 +18,28 @@ type Props = {
   blobConfigured: boolean;
 };
 
-type UploadStage = "idle" | "pdf" | "cover" | "saving" | "done";
+type UploadStage = "idle" | "pdf" | "cover" | "generating-cover" | "saving" | "done";
 
 const currentYear = () => new Date().getFullYear();
+
+/** Unique per upload, so replacing a file never collides with (or is masked
+ * by a CDN-cached copy of) the previous one at the same URL. */
+const stamp = () => Date.now().toString(36);
+
+/** Renders page 1 of the PDF and stores it as the edition's cover image, so
+ * the widget and archive load a plain JPG instead of every visitor opening
+ * the PDF to draw it. */
+async function uploadGeneratedCover(slug: string, pdf: File | string): Promise<string> {
+  const source = typeof pdf === "string" ? pdf : await pdf.arrayBuffer();
+  const { blob } = await renderPdfCoverBlob(source, COVER_IMAGE_WIDTH);
+  const file = new File([blob], `${slug}.jpg`, { type: "image/jpeg" });
+  const uploaded = await upload(`magazines/covers/${slug}-${stamp()}.jpg`, file, {
+    access: "public",
+    handleUploadUrl: "/api/admin/upload",
+    contentType: "image/jpeg",
+  });
+  return uploaded.url;
+}
 
 export function AdminDashboard({ initialEditions, initialSponsors, initialSponsorSettings, blobConfigured }: Props) {
   const router = useRouter();
@@ -34,11 +54,56 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
+  const [coverBackfill, setCoverBackfill] = useState<{ done: number; total: number; failed: number } | null>(null);
+  const backfillStartedRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   const busy = stage !== "idle" && stage !== "done";
   const existingSlug = `${year}-${String(month).padStart(2, "0")}`;
   const willReplace = editions.some((edition) => edition.slug === existingSlug);
+
+  // Editions published before covers were generated automatically (or whose
+  // generation failed) get their cover now, once, in the background.
+  useEffect(() => {
+    if (!blobConfigured || backfillStartedRef.current) return;
+    const missing = editions.filter((edition) => !edition.coverUrl);
+    if (missing.length === 0) return;
+    backfillStartedRef.current = true;
+
+    void (async () => {
+      let done = 0;
+      let failed = 0;
+      setCoverBackfill({ done, total: missing.length, failed });
+      let latest: Magazine[] | undefined;
+      for (const edition of missing) {
+        try {
+          const coverUrl = await uploadGeneratedCover(edition.slug, edition.url);
+          const res = await fetch("/api/admin/editions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              year: edition.year,
+              month: edition.month,
+              editionLabel: edition.editionLabel,
+              pdfUrl: edition.url,
+              pdfFilename: edition.filename,
+              coverUrl,
+            }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { error?: string; editions?: Magazine[] };
+          if (!res.ok) throw new Error(data.error ?? "No se pudo guardar la portada.");
+          latest = data.editions ?? latest;
+          done++;
+        } catch (err) {
+          console.error(`[admin] Portada de ${edition.slug}:`, err);
+          failed++;
+        }
+        setCoverBackfill({ done, total: missing.length, failed });
+      }
+      if (latest) setEditions(latest);
+      router.refresh();
+    })();
+  }, [blobConfigured, editions, router]);
 
   async function handleLogout() {
     await fetch("/api/admin/logout", { method: "POST" });
@@ -67,7 +132,7 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
     try {
       setStage("pdf");
       setProgress(0);
-      const pdfBlob = await upload(`magazines/${slug}.pdf`, pdfFile, {
+      const pdfBlob = await upload(`magazines/${slug}-${stamp()}.pdf`, pdfFile, {
         access: "public",
         handleUploadUrl: "/api/admin/upload",
         contentType: "application/pdf",
@@ -80,13 +145,22 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
         setStage("cover");
         setProgress(0);
         const ext = coverFile.name.split(".").pop()?.toLowerCase() || "jpg";
-        const coverBlob = await upload(`magazines/covers/${slug}.${ext}`, coverFile, {
+        const coverBlob = await upload(`magazines/covers/${slug}-${stamp()}.${ext}`, coverFile, {
           access: "public",
           handleUploadUrl: "/api/admin/upload",
           contentType: coverFile.type || undefined,
           onUploadProgress: (p) => setProgress(p.percentage),
         });
         coverUrl = coverBlob.url;
+      } else {
+        // No cover picked: generate it from page 1 of the PDF being published.
+        setStage("generating-cover");
+        try {
+          coverUrl = await uploadGeneratedCover(slug, pdfFile);
+        } catch (err) {
+          // Not fatal: without a stored cover, the site renders it from the PDF.
+          console.error("[admin] No se pudo generar la portada:", err);
+        }
       }
 
       setStage("saving");
@@ -252,6 +326,7 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
                   <span>
                     {stage === "pdf" && "Subiendo PDF..."}
                     {stage === "cover" && "Subiendo portada..."}
+                    {stage === "generating-cover" && "Generando portada desde la pagina 1..."}
                     {stage === "saving" && "Guardando edicion..."}
                   </span>
                   {(stage === "pdf" || stage === "cover") && <span>{Math.round(progress)}%</span>}
@@ -259,7 +334,7 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
                 <div className="h-2 overflow-hidden rounded-full bg-white/10">
                   <div
                     className="h-full rounded-full bg-white transition-[width]"
-                    style={{ width: `${stage === "saving" ? 100 : progress}%` }}
+                    style={{ width: `${stage === "saving" || stage === "generating-cover" ? 100 : progress}%` }}
                   />
                 </div>
               </div>
@@ -280,6 +355,15 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
 
         <section>
           <h2 className="mb-4 font-serif text-xl text-white">Ediciones publicadas ({editions.length})</h2>
+          {coverBackfill && (
+            <p className="mb-4 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">
+              {coverBackfill.done + coverBackfill.failed < coverBackfill.total
+                ? `Generando portadas de ediciones anteriores (${coverBackfill.done + coverBackfill.failed}/${coverBackfill.total})... puedes seguir usando el panel.`
+                : coverBackfill.failed > 0
+                  ? `Portadas generadas: ${coverBackfill.done}. No se pudieron generar ${coverBackfill.failed}; se reintentara la proxima vez que abras el panel.`
+                  : `Listo: ${coverBackfill.done} ${coverBackfill.done === 1 ? "portada generada" : "portadas generadas"}. El widget y el archivo ya las cargan como imagen.`}
+            </p>
+          )}
           {editions.length === 0 ? (
             <p className="text-sm text-white/50">Aun no hay ediciones publicadas.</p>
           ) : (
