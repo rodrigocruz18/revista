@@ -18,7 +18,8 @@
  * existing `scripts/generate-magazine-manifest.ts` (which builds that file
  * from /public/magazines) was left untouched.
  */
-import { del, get, put } from "@vercel/blob";
+import { del } from "@vercel/blob";
+import { readBlobJson, writeBlobJson } from "@/lib/blobJson";
 import type { Magazine, MagazineManifest } from "@/types/magazine";
 import localManifest from "@/data/magazines.json";
 
@@ -42,21 +43,22 @@ export function normalizeEditions(editions: Magazine[]): Magazine[] {
   }));
 }
 
-export async function readManifestEditions(): Promise<Magazine[]> {
+/** Strict read for admin routes that modify the manifest: throws if Blob
+ * can't be read, so a failed read is never saved back as "no editions". */
+export async function loadManifestEditions(): Promise<Magazine[]> {
   if (!isBlobConfigured()) {
     return (localManifest as MagazineManifest).editions;
   }
+  const data = await readBlobJson<MagazineManifest>(MANIFEST_PATHNAME);
+  return Array.isArray(data?.editions) ? data.editions : [];
+}
+
+/** Lenient read for pages: on error, logs and shows no editions. */
+export async function readManifestEditions(): Promise<Magazine[]> {
   try {
-    // `useCache: false` bypasses the CDN edge cache and reads straight from
-    // origin storage — worth the small latency hit for this tiny file so an
-    // edition uploaded a moment ago is never masked by a stale cached read.
-    const result = await get(MANIFEST_PATHNAME, { access: "public", useCache: false });
-    if (!result) return [];
-    const text = await new Response(result.stream).text();
-    const data = JSON.parse(text) as MagazineManifest;
-    return Array.isArray(data.editions) ? data.editions : [];
+    return await loadManifestEditions();
   } catch (err) {
-    console.error("[blobManifest] Error leyendo manifest.json:", err);
+    console.error("[blobManifest] Error leyendo el manifest de ediciones:", err);
     return [];
   }
 }
@@ -68,13 +70,7 @@ export async function writeManifestEditions(editions: Magazine[]): Promise<void>
     );
   }
   const manifest: MagazineManifest = { generatedAt: new Date().toISOString(), editions };
-  await put(MANIFEST_PATHNAME, JSON.stringify(manifest, null, 2), {
-    access: "public",
-    contentType: "application/json",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    cacheControlMaxAge: 60, // the SDK's minimum; readManifestEditions() bypasses it anyway via useCache:false
-  });
+  await writeBlobJson(MANIFEST_PATHNAME, manifest);
 }
 
 /** Best-effort delete of an edition's PDF + cover blobs. Never throws — a

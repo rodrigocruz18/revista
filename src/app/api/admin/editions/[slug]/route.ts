@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/adminAuth";
-import { deleteEditionBlobs, normalizeEditions, readManifestEditions, writeManifestEditions } from "@/lib/blobManifest";
+import { deleteEditionBlobs, normalizeEditions, loadManifestEditions, writeManifestEditions } from "@/lib/blobManifest";
 
 export async function DELETE(_request: Request, context: RouteContext<"/api/admin/editions/[slug]">) {
   if (!(await isAuthenticated())) {
@@ -10,7 +10,7 @@ export async function DELETE(_request: Request, context: RouteContext<"/api/admi
   const { slug } = await context.params;
 
   try {
-    const editions = await readManifestEditions();
+    const editions = await loadManifestEditions();
     const target = editions.find((edition) => edition.slug === slug);
     if (!target) {
       return NextResponse.json({ error: "Edicion no encontrada." }, { status: 404 });

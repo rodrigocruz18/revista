@@ -99,6 +99,10 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Feedback for actions on existing sponsors (pause/delete/icon), shown
+  // right above the list instead of in the create form further up.
+  const [listError, setListError] = useState<string | null>(null);
+  const [listNotice, setListNotice] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
   const iconTargetRef = useRef<Sponsor | null>(null);
@@ -301,8 +305,8 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
 
   async function handleTogglePause(sponsor: Sponsor) {
     setBusyId(sponsor.id);
-    setError(null);
-    setNotice(null);
+    setListError(null);
+    setListNotice(null);
     const nextStatus = sponsor.status === "active" ? "paused" : "active";
     try {
       const res = await fetch(`/api/admin/sponsors/${sponsor.id}`, {
@@ -315,7 +319,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       setSponsors(data.sponsors ?? sponsors);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error actualizando el auspiciador.");
+      setListError(err instanceof Error ? err.message : "Error actualizando el auspiciador.");
     } finally {
       setBusyId(null);
     }
@@ -331,8 +335,8 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
     const sponsor = iconTargetRef.current;
     event.target.value = "";
     if (!file || !sponsor) return;
-    setError(null);
-    setNotice(null);
+    setListError(null);
+    setListNotice(null);
     setBusyId(sponsor.id);
     try {
       const { width, height } = await readImageDimensions(file);
@@ -347,10 +351,10 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
       const data = (await res.json().catch(() => ({}))) as { error?: string; sponsors?: Sponsor[] };
       if (!res.ok) throw new Error(data.error ?? "No se pudo guardar el icono.");
       setSponsors(data.sponsors ?? sponsors);
-      setNotice(`Icono de "${sponsor.name}" actualizado.`);
+      setListNotice(`Icono de "${sponsor.name}" actualizado.`);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error subiendo el icono.");
+      setListError(err instanceof Error ? err.message : "Error subiendo el icono.");
     } finally {
       setBusyId(null);
     }
@@ -359,17 +363,17 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   async function handleDelete(sponsor: Sponsor) {
     if (!window.confirm(`Eliminar "${sponsor.name}"? Esta accion no se puede deshacer.`)) return;
     setBusyId(sponsor.id);
-    setError(null);
-    setNotice(null);
+    setListError(null);
+    setListNotice(null);
     try {
       const res = await fetch(`/api/admin/sponsors/${sponsor.id}`, { method: "DELETE" });
       const data = (await res.json().catch(() => ({}))) as { error?: string; sponsors?: Sponsor[] };
       if (!res.ok) throw new Error(data.error ?? "No se pudo eliminar el auspiciador.");
       setSponsors(data.sponsors ?? sponsors.filter((s) => s.id !== sponsor.id));
-      setNotice(`"${sponsor.name}" se elimino.`);
+      setListNotice(`"${sponsor.name}" se elimino.`);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error eliminando el auspiciador.");
+      setListError(err instanceof Error ? err.message : "Error eliminando el auspiciador.");
     } finally {
       setBusyId(null);
     }
@@ -616,6 +620,12 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
         className="hidden"
         onChange={handleReplaceIcon}
       />
+      {listError && (
+        <p role="alert" className="mb-3 rounded-lg bg-red-400/10 px-3 py-2 text-sm text-red-300">
+          {listError}
+        </p>
+      )}
+      {listNotice && <p className="mb-3 rounded-lg bg-emerald-400/10 px-3 py-2 text-sm text-emerald-300">{listNotice}</p>}
       <h3 className="mb-4 font-serif text-lg text-white">Auspiciadores cargados ({sponsors.length})</h3>
       {sponsors.length === 0 ? (
         <p className="text-sm text-white/50">Aun no hay auspiciadores.</p>

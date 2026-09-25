@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/adminAuth";
-import { readSponsorsManifest, writeSponsorsManifest } from "@/lib/sponsorsManifest";
+import { loadSponsorsManifest, writeSponsorsManifest } from "@/lib/sponsorsManifest";
 import { brandKey } from "@/lib/sponsorBrands";
 import { parseCrop } from "@/lib/imageCrop";
 import type { Sponsor, SponsorCategory } from "@/types/sponsor";
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    let sponsors = await readSponsorsManifest();
+    let sponsors = await loadSponsorsManifest();
     const existing = sponsors.find((s) => s.id === id);
     let brandId = existing?.brandId ?? id;
 
@@ -150,6 +150,6 @@ export async function GET() {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
-  const sponsors = await readSponsorsManifest();
+  const sponsors = await loadSponsorsManifest();
   return NextResponse.json({ sponsors });
 }

@@ -11,25 +11,27 @@
  * sponsors) rather than throwing, so the rest of the app keeps working
  * exactly as before this feature existed.
  */
-import { del, get, put } from "@vercel/blob";
+import { del } from "@vercel/blob";
+import { readBlobJson, writeBlobJson } from "@/lib/blobJson";
 import type { Sponsor, SponsorsManifest } from "@/types/sponsor";
 import { isBlobConfigured } from "@/lib/blobManifest";
 
 const SPONSORS_MANIFEST_PATHNAME = "sponsors.json";
 
-export async function readSponsorsManifest(): Promise<Sponsor[]> {
+/** Strict read for admin routes that modify the list: throws if Blob can't
+ * be read, so a failed read is never saved back as "no sponsors". */
+export async function loadSponsorsManifest(): Promise<Sponsor[]> {
   if (!isBlobConfigured()) return [];
+  const data = await readBlobJson<SponsorsManifest>(SPONSORS_MANIFEST_PATHNAME);
+  return Array.isArray(data?.sponsors) ? data.sponsors : [];
+}
+
+/** Lenient read for pages: on error, logs and shows no sponsors. */
+export async function readSponsorsManifest(): Promise<Sponsor[]> {
   try {
-    // `useCache: false` bypasses the CDN edge cache — same reasoning as the
-    // magazine manifest: worth the small latency hit so a sponsor just
-    // added/paused/deleted from /admin is never masked by a stale read.
-    const result = await get(SPONSORS_MANIFEST_PATHNAME, { access: "public", useCache: false });
-    if (!result) return [];
-    const text = await new Response(result.stream).text();
-    const data = JSON.parse(text) as SponsorsManifest;
-    return Array.isArray(data.sponsors) ? data.sponsors : [];
+    return await loadSponsorsManifest();
   } catch (err) {
-    console.error("[sponsorsManifest] Error leyendo sponsors.json:", err);
+    console.error("[sponsorsManifest] Error leyendo auspiciadores:", err);
     return [];
   }
 }
@@ -41,13 +43,7 @@ export async function writeSponsorsManifest(sponsors: Sponsor[]): Promise<void> 
     );
   }
   const manifest: SponsorsManifest = { generatedAt: new Date().toISOString(), sponsors };
-  await put(SPONSORS_MANIFEST_PATHNAME, JSON.stringify(manifest, null, 2), {
-    access: "public",
-    contentType: "application/json",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    cacheControlMaxAge: 60, // the SDK's minimum; readSponsorsManifest() bypasses it anyway via useCache:false
-  });
+  await writeBlobJson(SPONSORS_MANIFEST_PATHNAME, manifest);
 }
 
 /** Best-effort delete of a sponsor's uploaded images. Never throws — a

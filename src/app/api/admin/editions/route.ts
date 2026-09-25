@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/adminAuth";
-import { normalizeEditions, readManifestEditions, writeManifestEditions } from "@/lib/blobManifest";
+import { normalizeEditions, loadManifestEditions, writeManifestEditions } from "@/lib/blobManifest";
 import { MONTHS_ES } from "@/config/magazine";
 import type { Magazine } from "@/types/magazine";
 
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
   const editionLabel = customLabel || `${MONTHS_ES[month - 1]} ${year}`;
 
   try {
-    const editions = await readManifestEditions();
+    const editions = await loadManifestEditions();
     const upserted: Magazine = {
       filename: pdfFilename || `${slug}.pdf`,
       url: pdfUrl,
@@ -78,6 +78,6 @@ export async function GET() {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
-  const editions = await readManifestEditions();
+  const editions = await loadManifestEditions();
   return NextResponse.json({ editions });
 }

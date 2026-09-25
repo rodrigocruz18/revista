@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/adminAuth";
 import { del } from "@vercel/blob";
-import { deleteSponsorBlobs, readSponsorsManifest, writeSponsorsManifest } from "@/lib/sponsorsManifest";
+import { deleteSponsorBlobs, loadSponsorsManifest, writeSponsorsManifest } from "@/lib/sponsorsManifest";
 import { brandKey } from "@/lib/sponsorBrands";
 import type { Sponsor, SponsorStatus } from "@/types/sponsor";
 
@@ -44,7 +44,7 @@ export async function PATCH(request: NextRequest, context: RouteContext<"/api/ad
   }
 
   try {
-    const sponsors = await readSponsorsManifest();
+    const sponsors = await loadSponsorsManifest();
     const target = sponsors.find((s) => s.id === id);
     if (!target) {
       return NextResponse.json({ error: "Auspiciador no encontrado." }, { status: 404 });
@@ -81,7 +81,7 @@ export async function DELETE(_request: Request, context: RouteContext<"/api/admi
   const { id } = await context.params;
 
   try {
-    const sponsors = await readSponsorsManifest();
+    const sponsors = await loadSponsorsManifest();
     const target = sponsors.find((s) => s.id === id);
     if (!target) {
       return NextResponse.json({ error: "Auspiciador no encontrado." }, { status: 404 });
