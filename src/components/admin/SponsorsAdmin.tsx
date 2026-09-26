@@ -8,11 +8,13 @@ import {
   SPONSOR_FULLPAGE_MIN_SIZE,
   SPONSOR_ICON_MIN_SIZE,
   SPONSOR_IMAGE_SPECS,
+  fullPageImageProblem,
 } from "@/config/sponsors";
 import type { Sponsor, SponsorCategory } from "@/types/sponsor";
 import { brandKey, sponsorDomain, uniqueBrands } from "@/lib/sponsorBrands";
 import { coverCrop, type ImageCrop } from "@/lib/imageCrop";
 import { ImageCropper } from "@/components/admin/ImageCropper";
+import { SponsorEditor } from "@/components/admin/SponsorEditor";
 
 type Props = {
   initialSponsors: Sponsor[];
@@ -28,8 +30,6 @@ type PickedBanner = PickedImage & { src: string };
 const BANNER_TYPES = "image/png,image/jpeg,image/webp";
 const BANNER_MAX_BYTES = 10 * 1024 * 1024;
 
-const FULLPAGE_RATIO = SPONSOR_FULLPAGE_MIN_SIZE.width / SPONSOR_FULLPAGE_MIN_SIZE.height;
-const FULLPAGE_RATIO_TOLERANCE = 0.12; // +/-12% — real magazine pages vary a little, this isn't pixel-exact like the banners
 
 function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
@@ -103,6 +103,7 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
   // right above the list instead of in the create form further up.
   const [listError, setListError] = useState<string | null>(null);
   const [listNotice, setListNotice] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
   const iconTargetRef = useRef<Sponsor | null>(null);
@@ -143,13 +144,9 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
         const banner: PickedBanner = { file, width, height, src: URL.createObjectURL(file) };
         pickBanner(slot, banner);
       } else {
-        const { width: minW, height: minH } = SPONSOR_FULLPAGE_MIN_SIZE;
-        const ratio = width / height;
-        const ratioOk = Math.abs(ratio - FULLPAGE_RATIO) / FULLPAGE_RATIO <= FULLPAGE_RATIO_TOLERANCE;
-        if (width < minW || height < minH || !ratioOk) {
-          setImageError(
-            `La imagen de pagina completa debe ser al menos ${minW}x${minH}px, en formato vertical similar a una hoja de revista (esta imagen mide ${width}x${height}px). Se recorta levemente para encajar, pero la proporcion debe ser parecida.`,
-          );
+        const problem = fullPageImageProblem(width, height);
+        if (problem) {
+          setImageError(problem);
           setFullPage(null);
           event.target.value = "";
           return;
@@ -634,10 +631,8 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
           {sortedSponsors.map((sponsor) => {
             const thumb = sponsor.horizontalImageUrl ?? sponsor.fullPageImageUrl ?? sponsor.verticalImageUrl;
             return (
-              <li
-                key={sponsor.id}
-                className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/5 p-3"
-              >
+              <li key={sponsor.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                <div className="flex items-center gap-4">
                 {sponsor.iconUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={sponsor.iconUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg bg-white object-contain p-1" />
@@ -665,6 +660,18 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
                   <p className="truncate text-xs text-white/40">{sponsor.targetUrl}</p>
                 </div>
                 <button
+                  type="button"
+                  onClick={() => {
+                    setListError(null);
+                    setListNotice(null);
+                    setEditingId(editingId === sponsor.id ? null : sponsor.id);
+                  }}
+                  disabled={busyId === sponsor.id || !blobConfigured}
+                  className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/70 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {editingId === sponsor.id ? "Cerrar" : "Editar"}
+                </button>
+                <button
                   onClick={() => pickIconFor(sponsor)}
                   disabled={busyId === sponsor.id || !blobConfigured}
                   className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/70 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
@@ -685,6 +692,20 @@ export function SponsorsAdmin({ initialSponsors, blobConfigured }: Props) {
                 >
                   Eliminar
                 </button>
+                </div>
+                {editingId === sponsor.id && (
+                  <SponsorEditor
+                    sponsor={sponsor}
+                    placements={sponsors.filter((s) => brandKey(s) === brandKey(sponsor)).length}
+                    onCancel={() => setEditingId(null)}
+                    onSaved={(next, message) => {
+                      setSponsors(next);
+                      setEditingId(null);
+                      setListNotice(message);
+                      router.refresh();
+                    }}
+                  />
+                )}
               </li>
             );
           })}

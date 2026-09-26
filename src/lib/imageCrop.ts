@@ -56,6 +56,14 @@ export function cropAt(imageW: number, imageH: number, frameRatio: number, zoom:
   return { x, y, w, h };
 }
 
+/** Inverse of cropAt: the zoom and center that reproduce a stored crop, so
+ * the cropper can reopen an existing banner exactly as it was framed. */
+export function cropView(imageW: number, imageH: number, frameRatio: number, crop: ImageCrop) {
+  const imageRatio = imageW / imageH;
+  const coverW = imageRatio > frameRatio ? frameRatio / imageRatio : 1;
+  return { zoom: coverW / crop.w, cx: crop.x + crop.w / 2, cy: crop.y + crop.h / 2 };
+}
+
 function clampAxis(start: number, size: number): number {
   const lo = Math.min(0, 1 - size);
   const hi = Math.max(0, 1 - size);

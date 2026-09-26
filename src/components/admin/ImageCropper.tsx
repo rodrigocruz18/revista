@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { cropAt, cropImageStyle, minZoom, type ImageCrop } from "@/lib/imageCrop";
+import { cropAt, cropImageStyle, cropView, minZoom, type ImageCrop } from "@/lib/imageCrop";
 import { cn } from "@/lib/utils";
 
 const MAX_ZOOM = 4;
@@ -17,6 +17,8 @@ type Props = {
   target: { width: number; height: number };
   /** CSS sizing for the on-screen frame (its aspect ratio is set here). */
   frameClassName: string;
+  /** Start from an existing framing (editing a saved banner) instead of centered fill. */
+  initialCrop?: ImageCrop | null;
   onChange: (crop: ImageCrop) => void;
 };
 
@@ -28,15 +30,16 @@ type Props = {
  * result is an ImageCrop applied to the original file at display time, with
  * the same cropImageStyle() the reader uses, so this preview is exact.
  *
- * Mount with a `key` per picked file — initial framing (centered fill) is
- * taken on mount.
+ * Mount with a `key` per picked file — initial framing (`initialCrop`, or
+ * centered fill) is taken on mount.
  */
-export function ImageCropper({ src, imageWidth, imageHeight, target, frameClassName, onChange }: Props) {
+export function ImageCropper({ src, imageWidth, imageHeight, target, frameClassName, initialCrop, onChange }: Props) {
   const ratio = target.width / target.height;
   const zoomFloor = Math.min(1, minZoom(imageWidth, imageHeight, ratio));
-  const [zoom, setZoom] = useState(1);
-  const [center, setCenter] = useState({ x: 0.5, y: 0.5 });
-  const [bg, setBg] = useState("#ffffff");
+  const [initialView] = useState(() => (initialCrop ? cropView(imageWidth, imageHeight, ratio, initialCrop) : null));
+  const [zoom, setZoom] = useState(() => (initialView ? clampZoom(initialView.zoom, zoomFloor) : 1));
+  const [center, setCenter] = useState(() => (initialView ? { x: initialView.cx, y: initialView.cy } : { x: 0.5, y: 0.5 }));
+  const [bg, setBg] = useState(initialCrop?.bg ?? "#ffffff");
   const [dragging, setDragging] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ px: number; py: number; cx: number; cy: number } | null>(null);

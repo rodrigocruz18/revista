@@ -8,6 +8,7 @@ import type { Magazine } from "@/types/magazine";
 import type { Sponsor } from "@/types/sponsor";
 import { SponsorsAdmin } from "@/components/admin/SponsorsAdmin";
 import { SponsorSettingsAdmin } from "@/components/admin/SponsorSettingsAdmin";
+import { EditionEditor } from "@/components/admin/EditionEditor";
 import type { SponsorSettings } from "@/lib/sponsorSettings";
 import { COVER_IMAGE_WIDTH, renderPdfCoverBlob } from "@/lib/pdfCover";
 
@@ -54,6 +55,9 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
+  const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [listNotice, setListNotice] = useState<string | null>(null);
   const [coverBackfill, setCoverBackfill] = useState<{ done: number; total: number; failed: number } | null>(null);
   const backfillStartedRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -198,17 +202,17 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
   async function handleDelete(slug: string, editionLabel: string) {
     if (!window.confirm(`Eliminar "${editionLabel}"? Esta accion no se puede deshacer.`)) return;
     setDeletingSlug(slug);
-    setError(null);
-    setNotice(null);
+    setListError(null);
+    setListNotice(null);
     try {
       const res = await fetch(`/api/admin/editions/${slug}`, { method: "DELETE" });
       const data = (await res.json().catch(() => ({}))) as { error?: string; editions?: Magazine[] };
       if (!res.ok) throw new Error(data.error ?? "No se pudo eliminar la edicion.");
       setEditions(data.editions ?? editions.filter((e) => e.slug !== slug));
-      setNotice(`"${editionLabel}" se elimino.`);
+      setListNotice(`"${editionLabel}" se elimino.`);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error eliminando la edicion.");
+      setListError(err instanceof Error ? err.message : "Error eliminando la edicion.");
     } finally {
       setDeletingSlug(null);
     }
@@ -364,15 +368,19 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
                   : `Listo: ${coverBackfill.done} ${coverBackfill.done === 1 ? "portada generada" : "portadas generadas"}. El widget y el archivo ya las cargan como imagen.`}
             </p>
           )}
+          {listError && (
+            <p role="alert" className="mb-3 rounded-lg bg-red-400/10 px-3 py-2 text-sm text-red-300">
+              {listError}
+            </p>
+          )}
+          {listNotice && <p className="mb-3 rounded-lg bg-emerald-400/10 px-3 py-2 text-sm text-emerald-300">{listNotice}</p>}
           {editions.length === 0 ? (
             <p className="text-sm text-white/50">Aun no hay ediciones publicadas.</p>
           ) : (
             <ul className="space-y-3">
               {editions.map((edition) => (
-                <li
-                  key={edition.slug}
-                  className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/5 p-3"
-                >
+                <li key={edition.slug} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                  <div className="flex items-center gap-4">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={edition.coverUrl ?? "/brand/ace-icon.png"}
@@ -391,12 +399,37 @@ export function AdminDashboard({ initialEditions, initialSponsors, initialSponso
                     <p className="truncate text-xs text-white/40">{edition.slug} · {edition.filename}</p>
                   </div>
                   <button
+                    type="button"
+                    onClick={() => {
+                      setListError(null);
+                      setListNotice(null);
+                      setEditingSlug(editingSlug === edition.slug ? null : edition.slug);
+                    }}
+                    disabled={!blobConfigured || deletingSlug === edition.slug}
+                    className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/70 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {editingSlug === edition.slug ? "Cerrar" : "Editar"}
+                  </button>
+                  <button
                     onClick={() => handleDelete(edition.slug, edition.editionLabel)}
                     disabled={deletingSlug === edition.slug}
                     className="shrink-0 rounded-lg border border-red-400/30 px-3 py-1.5 text-sm text-red-300 transition hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {deletingSlug === edition.slug ? "Eliminando..." : "Eliminar"}
                   </button>
+                  </div>
+                  {editingSlug === edition.slug && (
+                    <EditionEditor
+                      edition={edition}
+                      onCancel={() => setEditingSlug(null)}
+                      onSaved={(next, message) => {
+                        setEditions(next);
+                        setEditingSlug(null);
+                        setListNotice(message);
+                        router.refresh();
+                      }}
+                    />
+                  )}
                 </li>
               ))}
             </ul>

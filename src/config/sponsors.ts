@@ -31,6 +31,17 @@ export const SPONSOR_IMAGE_SPECS = {
  * object-fit: cover, center-cropping a little rather than ever showing
  * empty bars. */
 export const SPONSOR_FULLPAGE_MIN_SIZE = { width: 1275, height: 1650 } as const;
+/** +/-12% around that reference ratio — real magazine pages vary a little. */
+export const SPONSOR_FULLPAGE_RATIO_TOLERANCE = 0.12;
+
+/** Error message if an image can't pass as a full magazine page, else null. */
+export function fullPageImageProblem(width: number, height: number): string | null {
+  const { width: minW, height: minH } = SPONSOR_FULLPAGE_MIN_SIZE;
+  const reference = minW / minH;
+  const ratioOk = Math.abs(width / height - reference) / reference <= SPONSOR_FULLPAGE_RATIO_TOLERANCE;
+  if (width >= minW && height >= minH && ratioOk) return null;
+  return `La imagen de pagina completa debe ser al menos ${minW}x${minH}px, en formato vertical similar a una hoja de revista (esta imagen mide ${width}x${height}px). Se recorta levemente para encajar, pero la proporcion debe ser parecida.`;
+}
 
 /** The sponsor icon (public "Auspiciadores" list) must be square and at
  * least this many pixels per side — it's displayed at ~48px, so this keeps
